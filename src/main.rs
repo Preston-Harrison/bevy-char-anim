@@ -1,8 +1,19 @@
-use bevy::{animation::AnimationTarget, asset::AssetPath, prelude::*};
+use bevy::{
+    animation::{ActiveAnimation, AnimationTarget, RepeatAnimation},
+    asset::AssetPath,
+    prelude::*,
+};
+use bevy_inspector_egui::quick::WorldInspectorPlugin;
+use utils::{freecam::FreeCamera, toggle_cursor_grab_with_esc};
 
-const PLAYER_ANIM_INDICES: [&str; 8] = [
+mod utils;
+
+const PLAYER_ANIM_INDICES: [&str; 11] = [
     "AimingIdle",
+    "FallingIdle",
+    "FallToLand",
     "FiringRifle",
+    "Jump",
     "RifleWalkBack",
     "RifleWalkForward",
     "StrafeLeft",
@@ -23,10 +34,17 @@ fn get_anim(name: &str) -> AssetPath<'static> {
 fn main() {
     App::new()
         .add_plugins(DefaultPlugins)
+        .add_plugins(WorldInspectorPlugin::new())
+        .add_plugins(utils::freecam::FreeCameraPlugin)
         .add_systems(Startup, setup)
         .add_systems(
             Update,
-            (init_player_animations, transition_player_animations),
+            (
+                init_player_animations,
+                transition_player_animations,
+                toggle_cursor_grab_with_esc,
+                toggle_freecam,
+            ),
         )
         .run();
 }
@@ -40,6 +58,7 @@ fn setup(
     // Spawn the camera.
     commands.spawn((
         Camera3d::default(),
+        FreeCamera::new(4.0),
         Transform::from_translation(Vec3::splat(6.0)).looking_at(Vec3::new(0., 1., 0.), Vec3::Y),
     ));
 
@@ -56,15 +75,9 @@ fn setup(
     // Spawn the player character.
     commands.spawn((
         SceneRoot(asset_server.load(GltfAssetLabel::Scene(0).from_asset("character.glb"))),
+        Player,
+        Name::new("Player"),
         Transform::from_scale(Vec3::splat(1.0)),
-        PlayerAnimations {
-            idle_upper: get_anim("AimingIdle"),
-            idle_lower: get_anim("AimingIdle"),
-            back: get_anim("RifleWalkBack"),
-            forward: get_anim("RifleWalkForward"),
-            left: get_anim("StrafeLeft"),
-            right: get_anim("StrafeRight"),
-        },
     ));
 
     // Spawn the ground.
@@ -75,7 +88,20 @@ fn setup(
     ));
 }
 
+fn toggle_freecam(
+    mut enabled: Local<bool>,
+    mut freecam: Query<&mut FreeCamera>,
+    keys: Res<ButtonInput<KeyCode>>,
+) {
+    if keys.just_pressed(KeyCode::KeyF) {
+        *enabled = !*enabled;
+    }
+    freecam.single_mut().movement_enabled = *enabled;
+}
+
 #[derive(Component)]
+struct Player;
+
 struct PlayerAnimations {
     forward: AssetPath<'static>,
     back: AssetPath<'static>,
@@ -83,16 +109,84 @@ struct PlayerAnimations {
     idle_lower: AssetPath<'static>,
     left: AssetPath<'static>,
     right: AssetPath<'static>,
+    jump: AssetPath<'static>,
+    falling: AssetPath<'static>,
+    land: AssetPath<'static>,
+}
+
+impl Default for PlayerAnimations {
+    fn default() -> Self {
+        PlayerAnimations {
+            idle_upper: get_anim("AimingIdle"),
+            idle_lower: get_anim("AimingIdle"),
+            back: get_anim("RifleWalkBack"),
+            forward: get_anim("RifleWalkForward"),
+            left: get_anim("StrafeLeft"),
+            right: get_anim("StrafeRight"),
+            jump: get_anim("Jump"),
+            falling: get_anim("FallingIdle"),
+            land: get_anim("FallToLand"),
+        }
+    }
 }
 
 #[derive(Component)]
 struct PlayerAnimationIndicies {
+    upper: UpperBodyAnimations,
+    lower: LowerBodyAnimations,
+}
+
+struct UpperBodyAnimations {
+    idle: AnimationNodeIndex,
+}
+
+struct LowerBodyAnimations {
     forward: AnimationNodeIndex,
     back: AnimationNodeIndex,
-    idle_upper: AnimationNodeIndex,
-    idle_lower: AnimationNodeIndex,
+    idle: AnimationNodeIndex,
     left: AnimationNodeIndex,
     right: AnimationNodeIndex,
+    jump: AnimationNodeIndex,
+    falling: AnimationNodeIndex,
+    land: AnimationNodeIndex,
+}
+
+impl PlayerAnimationIndicies {
+    fn is_upper_body_anim(&self, index: AnimationNodeIndex) -> bool {
+        index == self.upper.idle
+    }
+
+    fn is_lower_body_anim(&self, index: AnimationNodeIndex) -> bool {
+        index == self.lower.idle
+            || index == self.lower.forward
+            || index == self.lower.back
+            || index == self.lower.right
+            || index == self.lower.left
+            || index == self.lower.jump
+            || index == self.lower.falling
+            || index == self.lower.land
+    }
+
+    fn get_speed(&self, index: AnimationNodeIndex) -> f32 {
+        if index == self.lower.back {
+            return 0.7;
+        } else if index == self.lower.right {
+            return 1.5;
+        } else if index == self.lower.forward {
+            return 1.5;
+        };
+        return 1.0;
+    }
+
+    fn get_repeat(&self, index: AnimationNodeIndex) -> RepeatAnimation {
+        if index == self.lower.jump {
+            RepeatAnimation::Never
+        } else if index == self.lower.land {
+            RepeatAnimation::Never
+        } else {
+            RepeatAnimation::Forever
+        }
+    }
 }
 
 fn init_player_animations(
@@ -102,21 +196,24 @@ fn init_player_animations(
     children: Query<&Children>,
     parents: Query<&Parent>,
     names: Query<&Name>,
-    player_anims: Query<&PlayerAnimations>,
+    players: Query<&Player>,
     mut animation_graphs: ResMut<Assets<AnimationGraph>>,
     animation_targets: Query<&AnimationTarget>,
 ) {
     for entity in new_anim_players.iter_mut() {
         let upper_body_mask_group = 1;
+        // Apply this to mask out (not play) upper body part of this clip.
         let upper_body_mask = 1 << upper_body_mask_group;
         let lower_body_mask_group = 2;
+        // Apply this to mask out (not play) lower body part of this clip.
         let lower_body_mask = 1 << lower_body_mask_group;
 
-        let Some(player_anims) = find_upwards(entity, &parents, &player_anims) else {
+        if !find_upwards(entity, &parents, &players).is_some() {
             // This is not a player.
             continue;
         };
 
+        let player_anims = PlayerAnimations::default();
         let mut graph = AnimationGraph::new();
         let add_node = graph.add_additive_blend(1.0, graph.root);
         let lower_body_blend = graph.add_blend(1.0, add_node);
@@ -130,11 +227,11 @@ fn init_player_animations(
         let back = graph.add_clip_with_mask(back_clip, upper_body_mask, 1.0, lower_body_blend);
 
         let rifle_clip_upper = asset_server.load(player_anims.idle_upper.clone());
-        let rifle_idle_upper =
+        let idle_upper =
             graph.add_clip_with_mask(rifle_clip_upper, lower_body_mask, 1.0, upper_body_blend);
 
         let rifle_clip_lower = asset_server.load(player_anims.idle_lower.clone());
-        let rifle_idle_lower =
+        let idle_lower =
             graph.add_clip_with_mask(rifle_clip_lower, upper_body_mask, 1.0, lower_body_blend);
 
         let left_clip = asset_server.load(player_anims.left.clone());
@@ -143,7 +240,17 @@ fn init_player_animations(
         let right_clip = asset_server.load(player_anims.right.clone());
         let right = graph.add_clip_with_mask(right_clip, upper_body_mask, 1.0, lower_body_blend);
 
-        split_mixamo_rig(
+        let jump_clip = asset_server.load(player_anims.jump.clone());
+        let jump = graph.add_clip_with_mask(jump_clip, upper_body_mask, 1.0, lower_body_blend);
+
+        let falling_clip = asset_server.load(player_anims.falling.clone());
+        let falling =
+            graph.add_clip_with_mask(falling_clip, upper_body_mask, 1.0, lower_body_blend);
+
+        let land_clip = asset_server.load(player_anims.land.clone());
+        let land = graph.add_clip_with_mask(land_clip, upper_body_mask, 1.0, lower_body_blend);
+
+        let proc_targets = init_mixamo_rig_masks(
             entity,
             &mut graph,
             upper_body_mask_group,
@@ -157,13 +264,19 @@ fn init_player_animations(
             .entity(entity)
             .insert(AnimationGraphHandle(animation_graphs.add(graph)))
             .insert(PlayerAnimationState::default())
+            .insert(proc_targets)
             .insert(PlayerAnimationIndicies {
-                forward,
-                back,
-                idle_upper: rifle_idle_upper,
-                idle_lower: rifle_idle_lower,
-                left,
-                right,
+                upper: UpperBodyAnimations { idle: idle_upper },
+                lower: LowerBodyAnimations {
+                    forward,
+                    back,
+                    idle: idle_lower,
+                    left,
+                    right,
+                    jump,
+                    land,
+                    falling,
+                },
             });
     }
 }
@@ -189,16 +302,16 @@ enum LowerBodyState {
     Left,
     Right,
     Jump,
-    Airborne,
+    Falling,
     Land,
 }
 
 struct PlayerAnimationInput {
     /// +Y is forward
     local_movement_direction: Vec2,
+
     just_jumped: bool,
     is_grounded: bool,
-    just_landed: bool,
 }
 
 fn transition_animation_state(
@@ -207,7 +320,24 @@ fn transition_animation_state(
     state: &mut PlayerAnimationState,
     player: &mut AnimationPlayer,
 ) {
-    if input.local_movement_direction.length() < 0.1 {
+    if state.lower_body == LowerBodyState::Land
+        && player.animation(anims.lower.land).unwrap().is_finished()
+    {
+        state.lower_body = LowerBodyState::Idle;
+    } else if state.lower_body == LowerBodyState::Jump {
+        // Skip land animation if landed before jumped.
+        if input.is_grounded {
+            state.lower_body = LowerBodyState::Idle;
+        } else if player.animation(anims.lower.jump).unwrap().is_finished() {
+            state.lower_body = LowerBodyState::Falling;
+        }
+    } else if state.lower_body == LowerBodyState::Falling {
+        if input.is_grounded {
+            state.lower_body = LowerBodyState::Land;
+        }
+    } else if input.just_jumped {
+        state.lower_body = LowerBodyState::Jump;
+    } else if input.local_movement_direction.length() < 0.1 {
         state.lower_body = LowerBodyState::Idle;
     } else {
         state.lower_body = *sample_cardinal(
@@ -221,60 +351,91 @@ fn transition_animation_state(
         );
     }
 
-    let desired_animation = match state.lower_body {
-        LowerBodyState::Idle => anims.idle_lower,
-        LowerBodyState::Forward => anims.forward,
-        LowerBodyState::Back => anims.back,
-        LowerBodyState::Right => anims.right,
-        LowerBodyState::Left => anims.left,
-        _ => todo!(),
+    let target_lower_body_anim = match state.lower_body {
+        LowerBodyState::Idle => anims.lower.idle,
+        LowerBodyState::Forward => anims.lower.forward,
+        LowerBodyState::Back => anims.lower.back,
+        LowerBodyState::Right => anims.lower.right,
+        LowerBodyState::Left => anims.lower.left,
+        LowerBodyState::Jump => anims.lower.jump,
+        LowerBodyState::Falling => anims.lower.falling,
+        LowerBodyState::Land => anims.lower.land,
     };
 
-    let mut animations_to_stop = vec![];
-    for active in player.playing_animations() {
-        if *active.0 != desired_animation && *active.0 != anims.idle_upper {
-            animations_to_stop.push(*active.0);
-        }
-    }
+    let animations_to_fade = player
+        .playing_animations()
+        .filter_map(|(ix, _)| {
+            if anims.is_lower_body_anim(*ix) && *ix != target_lower_body_anim {
+                Some(*ix)
+            } else {
+                None
+            }
+        })
+        .collect();
 
-    let lerp_speed = 0.9;
-    let lerp_threshold = 0.01;
+    let rate = 0.9;
+    let threshold = 0.01;
 
-    for i in animations_to_stop {
-        let anim = player.animation_mut(i).unwrap();
-        if anim.weight() < lerp_threshold {
-            player.stop(i);
+    fade_out_animations(player, animations_to_fade, rate, threshold);
+    fade_in_animation(player, target_lower_body_anim, 1.0 / rate, threshold)
+        .set_speed(anims.get_speed(target_lower_body_anim))
+        .set_repeat(anims.get_repeat(target_lower_body_anim));
+
+    let target_upper_body_anim = anims.upper.idle;
+    player
+        .play(target_upper_body_anim)
+        .set_repeat(anims.get_repeat(target_upper_body_anim))
+        .set_weight(1.0)
+        .set_speed(anims.get_speed(anims.upper.idle));
+}
+
+fn fade_out_animations(
+    player: &mut AnimationPlayer,
+    anims: Vec<AnimationNodeIndex>,
+    rate: f32,
+    threshold: f32,
+) {
+    for index in anims {
+        let anim = player.animation_mut(index).unwrap();
+        if anim.weight() < threshold {
+            player.stop(index);
         } else {
-            anim.set_weight(anim.weight() * lerp_speed);
+            anim.set_weight(anim.weight() * rate);
         }
     }
+}
 
-    let is_playing = player.is_playing_animation(desired_animation);
-    let desired_anim_mut = player.play(desired_animation).repeat();
+fn fade_in_animation(
+    player: &mut AnimationPlayer,
+    anim: AnimationNodeIndex,
+    rate: f32,
+    threshold: f32,
+) -> &mut ActiveAnimation {
+    let is_playing_target_lower_body_anim = player.is_playing_animation(anim);
+    let target_anim = player.play(anim);
 
-    if desired_animation == anims.back {
-        desired_anim_mut.set_speed(0.7);
-    } else if desired_animation == anims.right {
-        desired_anim_mut.set_speed(1.5);
-    } else if desired_animation == anims.forward {
-        desired_anim_mut.set_speed(1.5);
-    }
-
-    if is_playing {
-        desired_anim_mut.set_weight((desired_anim_mut.weight() * (1.0 / lerp_speed)).min(1.0));
+    if is_playing_target_lower_body_anim {
+        let curr_weight = target_anim.weight();
+        target_anim.set_weight((curr_weight * rate).min(1.0));
     } else {
-        desired_anim_mut.set_weight(lerp_threshold);
+        target_anim.set_weight(threshold);
     }
-    player.play(anims.idle_upper).repeat().set_weight(1.0);
+
+    target_anim
 }
 
 fn transition_player_animations(
+    mut airborne: Local<bool>,
     keys: Res<ButtonInput<KeyCode>>,
     mut players: Query<(
         &mut AnimationPlayer,
         &mut PlayerAnimationState,
         &PlayerAnimationIndicies,
+        &PlayerProceduralAnimationTargets,
     )>,
+    player_roots: Query<Entity, With<Player>>,
+    mut transforms: Query<(&mut Transform, &GlobalTransform)>,
+    global_transforms: Query<&GlobalTransform>,
 ) {
     let local_movement_direction = unit_vector_from_bools(
         keys.pressed(KeyCode::KeyW),
@@ -282,20 +443,57 @@ fn transition_player_animations(
         keys.pressed(KeyCode::KeyA),
         keys.pressed(KeyCode::KeyD),
     );
+
     let input = PlayerAnimationInput {
+        just_jumped: !*airborne && keys.just_pressed(KeyCode::KeyJ),
+        is_grounded: !*airborne,
         local_movement_direction,
-        is_grounded: true,
-        just_jumped: false,
-        just_landed: false,
     };
 
-    for (mut player, mut state, anims) in players.iter_mut() {
+    if keys.just_pressed(KeyCode::KeyJ) {
+        *airborne = !*airborne;
+    }
+
+    let mut look_x_rotation = 0.0;
+    if keys.pressed(KeyCode::ArrowUp) {
+        look_x_rotation += 1f32.to_radians();
+    }
+    if keys.pressed(KeyCode::ArrowDown) {
+        look_x_rotation -= 1f32.to_radians();
+    }
+    let mut body_y_rotation = 0.0;
+    if keys.pressed(KeyCode::ArrowLeft) {
+        body_y_rotation += 1f32.to_radians();
+    }
+    if keys.pressed(KeyCode::ArrowRight) {
+        body_y_rotation -= 1f32.to_radians();
+    }
+
+    let Ok(root_entity) = player_roots.get_single() else {
+        return;
+    };
+    let (mut root_local, _) = transforms
+        .get_mut(root_entity)
+        .expect("root should have transform");
+    root_local.rotate_local_y(body_y_rotation);
+
+    for (mut player, mut state, anims, proc_targets) in players.iter_mut() {
         transition_animation_state(&input, anims, &mut state, &mut player);
+        let (mut spine_local, spine_global) = transforms
+            .get_mut(proc_targets.spine)
+            .expect("spine1 should have transform");
+        let root_global = global_transforms.get(root_entity).unwrap();
+        rotate_spine_about_player_x(root_global, spine_global, &mut spine_local, look_x_rotation);
     }
 }
 
+#[derive(Component)]
+struct PlayerProceduralAnimationTargets {
+    spine: Entity,
+}
+
 /// groups. The param `entity` should be the entity with an AnimationPlayer.
-fn split_mixamo_rig(
+fn init_mixamo_rig_masks(
     entity: Entity,
     graph: &mut AnimationGraph,
     upper_body_mask_group: u32,
@@ -303,31 +501,45 @@ fn split_mixamo_rig(
     children: &Query<&Children>,
     names: &Query<&Name>,
     animation_targets: &Query<&AnimationTarget>,
-) {
+) -> PlayerProceduralAnimationTargets {
     // Joints to mask out. All decendants (and this one) will be masked out.
-    let upper_body_joint_path = "mixamorig:Hips/mixamorig:Spine/mixamorig:Spine1/mixamorig:Spine2";
+    let upper_body_joint_paths = ["mixamorig:Hips/mixamorig:Spine/mixamorig:Spine1"];
     let lower_body_joint_paths = [
         "mixamorig:Hips/mixamorig:LeftUpLeg",
         "mixamorig:Hips/mixamorig:RightUpLeg",
     ];
+    // Isolates don't mask decendants.
+    let isolated_lower_body_joint_paths = ["mixamorig:Hips"];
+    let isolated_fully_mask = ["mixamorig:Hips/mixamorig:Spine"];
 
-    // These will be assigned to lower body, but decendants will not be.
-    let isolated_lower_body_joint_paths = [
-        "mixamorig:Hips",
-        "mixamorig:Hips/mixamorig:Spine",
-        "mixamorig:Hips/mixamorig:Spine/mixamorig:Spine1",
-    ];
+    let mut proc_targets = None;
 
-    // Find entity from joint path.
-    let upper_body_joint_entity =
-        find_child_by_path(entity, upper_body_joint_path, &children, &names)
+    for joint_path in isolated_fully_mask {
+        let entity = find_child_by_path(entity, joint_path, &children, &names)
+            .expect("upper body joint not found");
+        let target = animation_targets.get(entity).expect(&format!(
+            "isolate {} should have animation target",
+            joint_path
+        ));
+        graph.add_target_to_mask_group(target.id, lower_body_mask_group);
+        graph.add_target_to_mask_group(target.id, upper_body_mask_group);
+
+        if joint_path.ends_with("Spine") {
+            proc_targets = Some(PlayerProceduralAnimationTargets { spine: entity });
+        }
+    }
+
+    for joint_path in upper_body_joint_paths {
+        // Find entity from joint path.
+        let upper_body_joint_entity = find_child_by_path(entity, joint_path, &children, &names)
             .expect("upper body joint not found");
 
-    // Add every joint for every decendant (including the joint path).
-    let entities_to_mask = get_all_descendants(upper_body_joint_entity, &children);
-    let targets_to_mask = map_query(entities_to_mask, &animation_targets);
-    for target in targets_to_mask {
-        graph.add_target_to_mask_group(target.id, upper_body_mask_group);
+        // Add every joint for every decendant (including the joint path).
+        let entities_to_mask = get_all_descendants(upper_body_joint_entity, &children);
+        let targets_to_mask = map_query(entities_to_mask, &animation_targets);
+        for target in targets_to_mask {
+            graph.add_target_to_mask_group(target.id, upper_body_mask_group);
+        }
     }
 
     // Same thing here for both legs.
@@ -354,6 +566,8 @@ fn split_mixamo_rig(
             .expect(&format!("isolate {} should have animation target", isolate));
         graph.add_target_to_mask_group(target.id, lower_body_mask_group);
     }
+
+    proc_targets.expect("proc target to be set")
 }
 
 /// Recursively searches for a child entity by a path of names, starting from the given root entity.
@@ -461,4 +675,23 @@ fn unit_vector_from_bools(forward: bool, back: bool, left: bool, right: bool) ->
         vec += Vec2::new(1.0, 0.0);
     }
     vec.normalize_or_zero()
+}
+
+/// Rotates the spine by a given angle around the player's local X axis.
+/// This ensures the rotation is applied relative to the player's orientation.
+///
+/// # Arguments
+/// * `player_global` - The global transform of the player, whose local X axis defines the rotation axis.
+/// * `spine_global` - The current global transform of the spine.
+/// * `spine_local` - The mutable local transform of the spine bone to be rotated.
+/// * `angle_radians` - The angle in radians to rotate the spine by around the player's X axis.
+pub fn rotate_spine_about_player_x(
+    player_global: &GlobalTransform,
+    spine_global: &GlobalTransform,
+    spine_local: &mut Transform,
+    angle_radians: f32,
+) {
+    let player_x = player_global.rotation() * Vec3::X;
+    let spine_local_axis = spine_global.rotation().inverse() * player_x;
+    spine_local.rotate_local_axis(Dir3::new(spine_local_axis).unwrap(), angle_radians);
 }
