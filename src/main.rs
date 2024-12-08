@@ -6,14 +6,17 @@ use bevy::{
 use bevy_inspector_egui::quick::WorldInspectorPlugin;
 use utils::{freecam::FreeCamera, toggle_cursor_grab_with_esc};
 
+mod anim;
+mod state;
 mod utils;
 
-const PLAYER_ANIM_INDICES: [&str; 11] = [
+const PLAYER_ANIM_INDICES: [&str; 12] = [
     "AimingIdle",
     "FallingIdle",
     "FallToLand",
     "FiringRifle",
     "Jump",
+    "RifleRun",
     "RifleWalkBack",
     "RifleWalkForward",
     "StrafeLeft",
@@ -201,60 +204,14 @@ fn init_player_animations(
     animation_targets: Query<&AnimationTarget>,
 ) {
     for entity in new_anim_players.iter_mut() {
-        let upper_body_mask_group = 1;
-        // Apply this to mask out (not play) upper body part of this clip.
-        let upper_body_mask = 1 << upper_body_mask_group;
-        let lower_body_mask_group = 2;
-        // Apply this to mask out (not play) lower body part of this clip.
-        let lower_body_mask = 1 << lower_body_mask_group;
-
         if !find_upwards(entity, &parents, &players).is_some() {
             // This is not a player.
             continue;
         };
 
-        let player_anims = PlayerAnimations::default();
-        let mut graph = AnimationGraph::new();
-        let add_node = graph.add_additive_blend(1.0, graph.root);
-        let lower_body_blend = graph.add_blend(1.0, add_node);
-        let upper_body_blend = graph.add_blend(1.0, add_node);
-
-        let forward_clip = asset_server.load(player_anims.forward.clone());
-        let forward =
-            graph.add_clip_with_mask(forward_clip, upper_body_mask, 1.0, lower_body_blend);
-
-        let back_clip = asset_server.load(player_anims.back.clone());
-        let back = graph.add_clip_with_mask(back_clip, upper_body_mask, 1.0, lower_body_blend);
-
-        let rifle_clip_upper = asset_server.load(player_anims.idle_upper.clone());
-        let idle_upper =
-            graph.add_clip_with_mask(rifle_clip_upper, lower_body_mask, 1.0, upper_body_blend);
-
-        let rifle_clip_lower = asset_server.load(player_anims.idle_lower.clone());
-        let idle_lower =
-            graph.add_clip_with_mask(rifle_clip_lower, upper_body_mask, 1.0, lower_body_blend);
-
-        let left_clip = asset_server.load(player_anims.left.clone());
-        let left = graph.add_clip_with_mask(left_clip, upper_body_mask, 1.0, lower_body_blend);
-
-        let right_clip = asset_server.load(player_anims.right.clone());
-        let right = graph.add_clip_with_mask(right_clip, upper_body_mask, 1.0, lower_body_blend);
-
-        let jump_clip = asset_server.load(player_anims.jump.clone());
-        let jump = graph.add_clip_with_mask(jump_clip, upper_body_mask, 1.0, lower_body_blend);
-
-        let falling_clip = asset_server.load(player_anims.falling.clone());
-        let falling =
-            graph.add_clip_with_mask(falling_clip, upper_body_mask, 1.0, lower_body_blend);
-
-        let land_clip = asset_server.load(player_anims.land.clone());
-        let land = graph.add_clip_with_mask(land_clip, upper_body_mask, 1.0, lower_body_blend);
-
-        let proc_targets = init_mixamo_rig_masks(
+        let (indices, proc_targets, graph) = anim::load_player_animations(
             entity,
-            &mut graph,
-            upper_body_mask_group,
-            lower_body_mask_group,
+            &asset_server,
             &children,
             &names,
             &animation_targets,
@@ -265,19 +222,7 @@ fn init_player_animations(
             .insert(AnimationGraphHandle(animation_graphs.add(graph)))
             .insert(PlayerAnimationState::default())
             .insert(proc_targets)
-            .insert(PlayerAnimationIndicies {
-                upper: UpperBodyAnimations { idle: idle_upper },
-                lower: LowerBodyAnimations {
-                    forward,
-                    back,
-                    idle: idle_lower,
-                    left,
-                    right,
-                    jump,
-                    land,
-                    falling,
-                },
-            });
+            .insert(indices);
     }
 }
 
@@ -294,7 +239,7 @@ impl Default for PlayerAnimationState {
     }
 }
 
-#[derive(Clone, Copy, PartialEq, Eq)]
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
 enum LowerBodyState {
     Idle,
     Forward,
@@ -320,27 +265,30 @@ fn transition_animation_state(
     state: &mut PlayerAnimationState,
     player: &mut AnimationPlayer,
 ) {
-    if state.lower_body == LowerBodyState::Land
-        && player.animation(anims.lower.land).unwrap().is_finished()
-    {
-        state.lower_body = LowerBodyState::Idle;
-    } else if state.lower_body == LowerBodyState::Jump {
-        // Skip land animation if landed before jumped.
-        if input.is_grounded {
-            state.lower_body = LowerBodyState::Idle;
-        } else if player.animation(anims.lower.jump).unwrap().is_finished() {
-            state.lower_body = LowerBodyState::Falling;
+    let finished = |anim: AnimationNodeIndex| player.animation(anim).unwrap().is_finished();
+
+    state.lower_body = match state.lower_body {
+        LowerBodyState::Land => {
+            if finished(anims.lower.land) {
+                LowerBodyState::Idle
+            } else {
+                LowerBodyState::Land
+            }
         }
-    } else if state.lower_body == LowerBodyState::Falling {
-        if input.is_grounded {
-            state.lower_body = LowerBodyState::Land;
+        LowerBodyState::Jump => {
+            // no jump anim for now as it looks slow.
+            LowerBodyState::Falling
         }
-    } else if input.just_jumped {
-        state.lower_body = LowerBodyState::Jump;
-    } else if input.local_movement_direction.length() < 0.1 {
-        state.lower_body = LowerBodyState::Idle;
-    } else {
-        state.lower_body = *sample_cardinal(
+        LowerBodyState::Falling => {
+            if input.is_grounded {
+                LowerBodyState::Land
+            } else {
+                LowerBodyState::Falling
+            }
+        }
+        _ if input.just_jumped => LowerBodyState::Jump,
+        _ if input.local_movement_direction.length() < 0.1 => LowerBodyState::Idle,
+        _ => *sample_cardinal(
             &[
                 LowerBodyState::Forward,
                 LowerBodyState::Back,
@@ -348,8 +296,8 @@ fn transition_animation_state(
                 LowerBodyState::Right,
             ],
             input.local_movement_direction,
-        );
-    }
+        ),
+    };
 
     let target_lower_body_anim = match state.lower_body {
         LowerBodyState::Idle => anims.lower.idle,
@@ -492,84 +440,6 @@ struct PlayerProceduralAnimationTargets {
     spine: Entity,
 }
 
-/// groups. The param `entity` should be the entity with an AnimationPlayer.
-fn init_mixamo_rig_masks(
-    entity: Entity,
-    graph: &mut AnimationGraph,
-    upper_body_mask_group: u32,
-    lower_body_mask_group: u32,
-    children: &Query<&Children>,
-    names: &Query<&Name>,
-    animation_targets: &Query<&AnimationTarget>,
-) -> PlayerProceduralAnimationTargets {
-    // Joints to mask out. All decendants (and this one) will be masked out.
-    let upper_body_joint_paths = ["mixamorig:Hips/mixamorig:Spine/mixamorig:Spine1"];
-    let lower_body_joint_paths = [
-        "mixamorig:Hips/mixamorig:LeftUpLeg",
-        "mixamorig:Hips/mixamorig:RightUpLeg",
-    ];
-    // Isolates don't mask decendants.
-    let isolated_lower_body_joint_paths = ["mixamorig:Hips"];
-    let isolated_fully_mask = ["mixamorig:Hips/mixamorig:Spine"];
-
-    let mut proc_targets = None;
-
-    for joint_path in isolated_fully_mask {
-        let entity = find_child_by_path(entity, joint_path, &children, &names)
-            .expect("upper body joint not found");
-        let target = animation_targets.get(entity).expect(&format!(
-            "isolate {} should have animation target",
-            joint_path
-        ));
-        graph.add_target_to_mask_group(target.id, lower_body_mask_group);
-        graph.add_target_to_mask_group(target.id, upper_body_mask_group);
-
-        if joint_path.ends_with("Spine") {
-            proc_targets = Some(PlayerProceduralAnimationTargets { spine: entity });
-        }
-    }
-
-    for joint_path in upper_body_joint_paths {
-        // Find entity from joint path.
-        let upper_body_joint_entity = find_child_by_path(entity, joint_path, &children, &names)
-            .expect("upper body joint not found");
-
-        // Add every joint for every decendant (including the joint path).
-        let entities_to_mask = get_all_descendants(upper_body_joint_entity, &children);
-        let targets_to_mask = map_query(entities_to_mask, &animation_targets);
-        for target in targets_to_mask {
-            graph.add_target_to_mask_group(target.id, upper_body_mask_group);
-        }
-    }
-
-    // Same thing here for both legs.
-    for joint_path in lower_body_joint_paths {
-        let lower_body_joint_entity = find_child_by_path(entity, joint_path, &children, &names)
-            .expect("lower body joint not found");
-
-        let entities_to_mask = get_all_descendants(lower_body_joint_entity, &children);
-        let targets_to_mask = map_query(entities_to_mask, &animation_targets);
-        for target in targets_to_mask.iter() {
-            graph.add_target_to_mask_group(target.id, lower_body_mask_group);
-        }
-    }
-
-    // The root of the character (mixamorig:Hips) is still animated by both upper and
-    // lower. It is bad to have the same target animated twice by an additive node. Here
-    // we decide to assign the hip bone (but not decendants, which we already assigned to
-    // either upper or lower) to the lower body.
-    for isolate in isolated_lower_body_joint_paths {
-        let entity = find_child_by_path(entity, isolate, &children, &names)
-            .expect(&format!("isolate bone {} should exist", isolate));
-        let target = animation_targets
-            .get(entity)
-            .expect(&format!("isolate {} should have animation target", isolate));
-        graph.add_target_to_mask_group(target.id, lower_body_mask_group);
-    }
-
-    proc_targets.expect("proc target to be set")
-}
-
 /// Recursively searches for a child entity by a path of names, starting from the given root entity.
 /// Returns the child entity if found, or `None` if the path is invalid/entity cannot be found.
 fn find_child_by_path(
@@ -600,27 +470,6 @@ fn find_child_by_path(
     }
 
     Some(parent)
-}
-
-/// Gets all decendants recursivley, including `entity`.
-fn get_all_descendants(entity: Entity, children: &Query<&Children>) -> Vec<Entity> {
-    let Ok(children_ok) = children.get(entity) else {
-        return vec![entity];
-    };
-    children_ok
-        .iter()
-        .flat_map(|e| get_all_descendants(*e, children))
-        .chain(std::iter::once(entity))
-        .collect()
-}
-
-/// Queries a component for a list of entities.
-fn map_query<T: Component + Clone>(entites: Vec<Entity>, query: &Query<&T>) -> Vec<T> {
-    entites
-        .into_iter()
-        .flat_map(|v| query.get(v).ok())
-        .cloned()
-        .collect::<Vec<_>>()
 }
 
 fn find_upwards<'a, T: Component>(

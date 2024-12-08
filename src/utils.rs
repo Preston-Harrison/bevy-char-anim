@@ -111,3 +111,110 @@ pub mod freecam {
         }
     }
 }
+
+/// Gets all decendants recursivley, including `entity`.
+pub fn get_all_descendants(entity: Entity, children: &Query<&Children>) -> Vec<Entity> {
+    let Ok(children_ok) = children.get(entity) else {
+        return vec![entity];
+    };
+    children_ok
+        .iter()
+        .flat_map(|e| get_all_descendants(*e, children))
+        .chain(std::iter::once(entity))
+        .collect()
+}
+
+/// Queries a component for a list of entities.
+pub fn map_query<T: Component + Clone>(entites: Vec<Entity>, query: &Query<&T>) -> Vec<T> {
+    entites
+        .into_iter()
+        .flat_map(|v| query.get(v).ok())
+        .cloned()
+        .collect::<Vec<_>>()
+}
+
+pub fn find_upwards<'a, T: Component>(
+    entity: Entity,
+    parents: &Query<&Parent>,
+    component: &'a Query<&T>,
+) -> Option<&'a T> {
+    let mut search = entity;
+    while let Ok(parent) = parents.get(search) {
+        if let Ok(comp) = component.get(parent.get()) {
+            return Some(comp);
+        };
+        search = parent.get();
+    }
+    return None;
+}
+
+/// Samples from the element in the array corresponding to the most aligned cardinal direction (forward, back, left, right) based on a Vec2.
+pub fn sample_cardinal<T>(array: &[T; 4], direction: Vec2) -> &T {
+    // Normalize the direction vector to handle non-unit vectors
+    let normalized_dir = direction.normalize_or_zero();
+    // Define the cardinal directions as unit vectors
+    let cardinal_directions = [
+        Vec2::new(0.0, 1.0),  // Forward
+        Vec2::new(0.0, -1.0), // Back
+        Vec2::new(-1.0, 0.0), // Left
+        Vec2::new(1.0, 0.0),  // Right
+    ];
+    // Find the index of the most aligned cardinal direction
+    let (max_index, _) = cardinal_directions
+        .iter()
+        .enumerate()
+        .map(|(i, &cardinal)| (i, normalized_dir.dot(cardinal)))
+        .max_by(|a, b| a.1.partial_cmp(&b.1).unwrap_or(std::cmp::Ordering::Equal))
+        .unwrap();
+    &array[max_index]
+}
+
+/// Constructs a unit vector (or zero vector) based on 4 booleans: [forward, back, left, right].
+pub fn unit_vector_from_bools(forward: bool, back: bool, left: bool, right: bool) -> Vec2 {
+    let mut vec = Vec2::ZERO;
+    if forward {
+        vec += Vec2::new(0.0, 1.0);
+    }
+    if back {
+        vec += Vec2::new(0.0, -1.0);
+    }
+    if left {
+        vec += Vec2::new(-1.0, 0.0);
+    }
+    if right {
+        vec += Vec2::new(1.0, 0.0);
+    }
+    vec.normalize_or_zero()
+}
+
+/// Recursively searches for a child entity by a path of names, starting from the given root entity.
+/// Returns the child entity if found, or `None` if the path is invalid/entity cannot be found.
+pub fn find_child_by_path(
+    scene: Entity,
+    path: &str,
+    children: &Query<&Children>,
+    names: &Query<&Name>,
+) -> Option<Entity> {
+    let mut parent = scene;
+
+    for segment in path.split('/') {
+        let old_parent = parent;
+
+        if let Ok(child_entities) = children.get(parent) {
+            for &child in child_entities {
+                if let Ok(name) = names.get(child) {
+                    if name.as_str() == segment {
+                        parent = child;
+                        break;
+                    }
+                }
+            }
+        }
+
+        if old_parent == parent {
+            return None;
+        }
+    }
+
+    Some(parent)
+}
