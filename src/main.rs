@@ -1,9 +1,5 @@
 use anim::PlayerProceduralAnimationTargets;
-use bevy::{
-    animation::AnimationTarget,
-    color::palettes::css::*,
-    prelude::*,
-};
+use bevy::{animation::AnimationTarget, color::palettes::css::*, prelude::*};
 use bevy_inspector_egui::quick::WorldInspectorPlugin;
 use state::{PlayerAnimationInput, PlayerAnimationState};
 use utils::{freecam::FreeCamera, toggle_cursor_grab_with_esc};
@@ -120,6 +116,7 @@ fn init_player_animations(
 }
 
 fn transition_player_animations(
+    mut spawned_spine: Local<Option<Entity>>,
     mut look_x_rotation: Local<f32>,
     mut airborne: Local<bool>,
     keys: Res<ButtonInput<KeyCode>>,
@@ -132,6 +129,8 @@ fn transition_player_animations(
     mut transforms: Query<(&mut Transform, &GlobalTransform)>,
     global_transforms: Query<&GlobalTransform>,
     mut gizmos: Gizmos,
+    mut commands: Commands,
+    parents: Query<&Parent>,
 ) {
     let local_movement_direction = utils::unit_vector_from_bools(
         keys.pressed(KeyCode::KeyW),
@@ -178,11 +177,24 @@ fn transition_player_animations(
         let (mut spine_local, spine_global) = transforms
             .get_mut(proc_targets.spine1)
             .expect("spine1 should have transform");
+
+        let spine = match *spawned_spine {
+            Some(e) => e,
+            None => {
+                let parent = parents.get(proc_targets.spine1).unwrap();
+                let child = commands.spawn(Transform::default()).id();
+                commands.entity(parent.get()).add_child(child);
+                *spawned_spine = Some(child);
+                child
+            }
+        };
+
+        let Ok(spine_global) = global_transforms.get(spine) else {
+            continue;
+        };
         let root_global = global_transforms.get(root_entity).unwrap();
-        let gun_global = global_transforms.get(proc_targets.gun).unwrap();
-        rotate_spine_for_gun(
+        rotate_spine_to_x(
             root_global,
-            gun_global,
             spine_global,
             &mut spine_local,
             *look_x_rotation,
@@ -210,56 +222,66 @@ pub fn rotate_spine_about_player_x(
     spine_local.rotate_local_axis(Dir3::new(spine_local_axis).unwrap(), angle_radians);
 }
 
-fn rotate_spine_for_gun(
+/// Rotates the spine bone to the target rotation about the player x-axis.
+fn rotate_spine_to_x(
     player_global: &GlobalTransform,
-    gun_global: &GlobalTransform,
     spine_global: &GlobalTransform,
     spine_local: &mut Transform,
     target_gun_x_rotation: f32,
     gizmos: &mut Gizmos,
 ) {
-    let gun_forward_g = gun_global.rotation() * Vec3::Y;
+    let player_x_local_to_spine =
+        spine_global.rotation().inverse() * player_global.rotation() * Vec3::X;
+    let target_rotation_local_to_spine =
+        Quat::from_axis_angle(player_x_local_to_spine, target_gun_x_rotation);
+    spine_local.rotation = target_rotation_local_to_spine;
+
     // Show gun direction in global space.
     gizmos.line(
-        gun_global.translation(),
-        gun_global.translation() + gun_forward_g * 1.0,
-        BLUE,
-    );
-
-    let player_z_g = player_global.rotation() * Vec3::Z;
-    let player_x_g = player_global.rotation() * Vec3::X;
-    let target_rotation = Quat::from_axis_angle(player_x_g, target_gun_x_rotation);
-    let look_direction_g = target_rotation * player_z_g;
-
-    // Show look direction in global space.
-    gizmos.line(
-        player_global.translation(),
-        player_global.translation() + look_direction_g * 1.0,
+        spine_global.translation(),
+        spine_global.translation() + target_rotation_local_to_spine * Vec3::Z * 1.0,
         LIGHT_CYAN,
     );
-
-    let spine_forward_g = spine_global.rotation() * Vec3::Z;
-    gizmos.line(
-        spine_global.translation(),
-        spine_global.translation() + spine_forward_g * 1.0,
-        LIGHT_CORAL,
-    );
-    gizmos.line(
-        spine_global.translation(),
-        spine_global.translation() + spine_global.rotation() * Vec3::Y * 1.0,
-        LIGHT_BLUE,
-    );
-
-
-    let gun_rotation_diff = quat_from_vectors(gun_forward_g, look_direction_g);
-    let ideal_gun_rotation = gun_rotation_diff * gun_forward_g;
-    gizmos.line(
-        gun_global.translation(),
-        gun_global.translation() + ideal_gun_rotation * 1.0,
-        LIGHT_CORAL,
-    );
-
 }
+
+// gizmos.line(
+//     spine_global.translation(),
+//     spine_global.translation() + spine_global.rotation() * player_x_l * 1.0,
+//     LIGHT_CORAL,
+// );
+
+// let player_z_g = player_global.rotation() * Vec3::Z;
+// let player_x_g = player_global.rotation() * Vec3::X;
+// let target_rotation = Quat::from_axis_angle(player_x_g, target_gun_x_rotation);
+// let look_direction_g = target_rotation * player_z_g;
+
+// // Show look direction in global space.
+// gizmos.line(
+//     player_global.translation(),
+//     player_global.translation() + look_direction_g * 1.0,
+//     LIGHT_CYAN,
+// );
+
+// let spine_forward_g = spine_global.rotation() * Vec3::Z;
+// gizmos.line(
+//     spine_global.translation(),
+//     spine_global.translation() + spine_forward_g * 1.0,
+//     LIGHT_CORAL,
+// );
+// gizmos.line(
+//     spine_global.translation(),
+//     spine_global.translation() + spine_global.rotation() * Vec3::Y * 1.0,
+//     LIGHT_BLUE,
+// );
+
+// let gun_rotation_diff = quat_from_vectors(gun_forward_g, look_direction_g);
+// let ideal_gun_rotation = gun_rotation_diff * gun_forward_g;
+// gizmos.line(
+//     gun_global.translation(),
+//     gun_global.translation() + ideal_gun_rotation * 1.0,
+//     LIGHT_CORAL,
+// );
+// }
 
 fn quat_from_vectors(a: Vec3, b: Vec3) -> Quat {
     let a_normalized = a.normalize();

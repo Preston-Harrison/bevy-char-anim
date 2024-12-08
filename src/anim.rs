@@ -111,6 +111,8 @@ impl PlayerAnimations {
 
 #[derive(Component)]
 pub struct PlayerProceduralAnimationTargets {
+    pub hips: Entity,
+    pub spine: Entity,
     pub spine1: Entity,
     pub gun: Entity,
 }
@@ -197,8 +199,13 @@ fn init_mixamo_rig_masks(
         "mixamorig:Hips/mixamorig:RightUpLeg",
     ];
     // Isolates don't mask decendants.
-    let isolated_lower_body_joint_paths = ["mixamorig:Hips", "mixamorig:Hips/mixamorig:Spine"];
-    let isolated_fully_mask = ["mixamorig:Hips/mixamorig:Spine/mixamorig:Spine1"];
+    let isolated_lower_body_joint_paths = [
+        "mixamorig:Hips/mixamorig:Spine",
+        "mixamorig:Hips",
+    ];
+    let isolated_fully_mask = [
+        "mixamorig:Hips/mixamorig:Spine/mixamorig:Spine1",
+    ];
 
     for joint_path in isolated_fully_mask {
         let entity = find_child_by_path(root, joint_path, &children, &names)
@@ -250,6 +257,8 @@ fn init_mixamo_rig_masks(
     }
 
     PlayerProceduralAnimationTargets {
+        hips: find_child_with_name(root, "mixamorig:Hips", children, names).unwrap(),
+        spine: find_child_with_name(root, "mixamorig:Spine", children, names).unwrap(),
         spine1: find_child_by_path(
             root,
             "mixamorig:Hips/mixamorig:Spine/mixamorig:Spine1",
