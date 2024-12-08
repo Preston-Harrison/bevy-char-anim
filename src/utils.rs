@@ -218,3 +218,21 @@ pub fn find_child_by_path(
 
     Some(parent)
 }
+
+pub fn find_child_with_name(root: Entity, name: &str, children: &Query<&Children>, names: &Query<&Name>) -> Option<Entity> {
+    if let Ok(n) = names.get(root) {
+        if n.as_str() == name {
+            return Some(root);
+        }
+    }
+
+    if let Ok(c) = children.get(root) {
+        for child in c {
+            if let Some(entity) = find_child_with_name(*child, name, children, names) {
+                return Some(entity);
+            }
+        }
+    }
+
+    return None;
+}

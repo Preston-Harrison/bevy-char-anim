@@ -1,38 +1,16 @@
+use anim::PlayerProceduralAnimationTargets;
 use bevy::{
-    animation::{ActiveAnimation, AnimationTarget, RepeatAnimation},
-    asset::AssetPath,
+    animation::AnimationTarget,
+    color::palettes::css::*,
     prelude::*,
 };
 use bevy_inspector_egui::quick::WorldInspectorPlugin;
+use state::{PlayerAnimationInput, PlayerAnimationState};
 use utils::{freecam::FreeCamera, toggle_cursor_grab_with_esc};
 
 mod anim;
 mod state;
 mod utils;
-
-const PLAYER_ANIM_INDICES: [&str; 12] = [
-    "AimingIdle",
-    "FallingIdle",
-    "FallToLand",
-    "FiringRifle",
-    "Jump",
-    "RifleRun",
-    "RifleWalkBack",
-    "RifleWalkForward",
-    "StrafeLeft",
-    "StrafeRight",
-    "WalkBack",
-    "WalkForward",
-];
-
-fn get_anim(name: &str) -> AssetPath<'static> {
-    for (i, curr) in PLAYER_ANIM_INDICES.iter().enumerate() {
-        if name == *curr {
-            return GltfAssetLabel::Animation(i).from_asset("character.glb");
-        }
-    }
-    panic!("no anim with name {}", name);
-}
 
 fn main() {
     App::new()
@@ -43,6 +21,7 @@ fn main() {
         .add_systems(
             Update,
             (
+                draw_xyz_gizmo,
                 init_player_animations,
                 transition_player_animations,
                 toggle_cursor_grab_with_esc,
@@ -77,7 +56,9 @@ fn setup(
 
     // Spawn the player character.
     commands.spawn((
-        SceneRoot(asset_server.load(GltfAssetLabel::Scene(0).from_asset("character.glb"))),
+        SceneRoot(
+            asset_server.load(GltfAssetLabel::Scene(0).from_asset("models/gltf/character.glb")),
+        ),
         Player,
         Name::new("Player"),
         Transform::from_scale(Vec3::splat(1.0)),
@@ -105,93 +86,6 @@ fn toggle_freecam(
 #[derive(Component)]
 struct Player;
 
-struct PlayerAnimations {
-    forward: AssetPath<'static>,
-    back: AssetPath<'static>,
-    idle_upper: AssetPath<'static>,
-    idle_lower: AssetPath<'static>,
-    left: AssetPath<'static>,
-    right: AssetPath<'static>,
-    jump: AssetPath<'static>,
-    falling: AssetPath<'static>,
-    land: AssetPath<'static>,
-}
-
-impl Default for PlayerAnimations {
-    fn default() -> Self {
-        PlayerAnimations {
-            idle_upper: get_anim("AimingIdle"),
-            idle_lower: get_anim("AimingIdle"),
-            back: get_anim("RifleWalkBack"),
-            forward: get_anim("RifleWalkForward"),
-            left: get_anim("StrafeLeft"),
-            right: get_anim("StrafeRight"),
-            jump: get_anim("Jump"),
-            falling: get_anim("FallingIdle"),
-            land: get_anim("FallToLand"),
-        }
-    }
-}
-
-#[derive(Component)]
-struct PlayerAnimationIndicies {
-    upper: UpperBodyAnimations,
-    lower: LowerBodyAnimations,
-}
-
-struct UpperBodyAnimations {
-    idle: AnimationNodeIndex,
-}
-
-struct LowerBodyAnimations {
-    forward: AnimationNodeIndex,
-    back: AnimationNodeIndex,
-    idle: AnimationNodeIndex,
-    left: AnimationNodeIndex,
-    right: AnimationNodeIndex,
-    jump: AnimationNodeIndex,
-    falling: AnimationNodeIndex,
-    land: AnimationNodeIndex,
-}
-
-impl PlayerAnimationIndicies {
-    fn is_upper_body_anim(&self, index: AnimationNodeIndex) -> bool {
-        index == self.upper.idle
-    }
-
-    fn is_lower_body_anim(&self, index: AnimationNodeIndex) -> bool {
-        index == self.lower.idle
-            || index == self.lower.forward
-            || index == self.lower.back
-            || index == self.lower.right
-            || index == self.lower.left
-            || index == self.lower.jump
-            || index == self.lower.falling
-            || index == self.lower.land
-    }
-
-    fn get_speed(&self, index: AnimationNodeIndex) -> f32 {
-        if index == self.lower.back {
-            return 0.7;
-        } else if index == self.lower.right {
-            return 1.5;
-        } else if index == self.lower.forward {
-            return 1.5;
-        };
-        return 1.0;
-    }
-
-    fn get_repeat(&self, index: AnimationNodeIndex) -> RepeatAnimation {
-        if index == self.lower.jump {
-            RepeatAnimation::Never
-        } else if index == self.lower.land {
-            RepeatAnimation::Never
-        } else {
-            RepeatAnimation::Forever
-        }
-    }
-}
-
 fn init_player_animations(
     mut commands: Commands,
     mut new_anim_players: Query<Entity, Added<AnimationPlayer>>,
@@ -204,12 +98,12 @@ fn init_player_animations(
     animation_targets: Query<&AnimationTarget>,
 ) {
     for entity in new_anim_players.iter_mut() {
-        if !find_upwards(entity, &parents, &players).is_some() {
+        if !utils::find_upwards(entity, &parents, &players).is_some() {
             // This is not a player.
             continue;
         };
 
-        let (indices, proc_targets, graph) = anim::load_player_animations(
+        let (anims, proc_targets, graph) = anim::load_player_animations(
             entity,
             &asset_server,
             &children,
@@ -220,172 +114,26 @@ fn init_player_animations(
         commands
             .entity(entity)
             .insert(AnimationGraphHandle(animation_graphs.add(graph)))
-            .insert(PlayerAnimationState::default())
-            .insert(proc_targets)
-            .insert(indices);
+            .insert(PlayerAnimationState::new(anims))
+            .insert(proc_targets);
     }
-}
-
-#[derive(Component)]
-struct PlayerAnimationState {
-    lower_body: LowerBodyState,
-}
-
-impl Default for PlayerAnimationState {
-    fn default() -> Self {
-        Self {
-            lower_body: LowerBodyState::Idle,
-        }
-    }
-}
-
-#[derive(Clone, Copy, PartialEq, Eq, Debug)]
-enum LowerBodyState {
-    Idle,
-    Forward,
-    Back,
-    Left,
-    Right,
-    Jump,
-    Falling,
-    Land,
-}
-
-struct PlayerAnimationInput {
-    /// +Y is forward
-    local_movement_direction: Vec2,
-
-    just_jumped: bool,
-    is_grounded: bool,
-}
-
-fn transition_animation_state(
-    input: &PlayerAnimationInput,
-    anims: &PlayerAnimationIndicies,
-    state: &mut PlayerAnimationState,
-    player: &mut AnimationPlayer,
-) {
-    let finished = |anim: AnimationNodeIndex| player.animation(anim).unwrap().is_finished();
-
-    state.lower_body = match state.lower_body {
-        LowerBodyState::Land => {
-            if finished(anims.lower.land) {
-                LowerBodyState::Idle
-            } else {
-                LowerBodyState::Land
-            }
-        }
-        LowerBodyState::Jump => {
-            // no jump anim for now as it looks slow.
-            LowerBodyState::Falling
-        }
-        LowerBodyState::Falling => {
-            if input.is_grounded {
-                LowerBodyState::Land
-            } else {
-                LowerBodyState::Falling
-            }
-        }
-        _ if input.just_jumped => LowerBodyState::Jump,
-        _ if input.local_movement_direction.length() < 0.1 => LowerBodyState::Idle,
-        _ => *sample_cardinal(
-            &[
-                LowerBodyState::Forward,
-                LowerBodyState::Back,
-                LowerBodyState::Left,
-                LowerBodyState::Right,
-            ],
-            input.local_movement_direction,
-        ),
-    };
-
-    let target_lower_body_anim = match state.lower_body {
-        LowerBodyState::Idle => anims.lower.idle,
-        LowerBodyState::Forward => anims.lower.forward,
-        LowerBodyState::Back => anims.lower.back,
-        LowerBodyState::Right => anims.lower.right,
-        LowerBodyState::Left => anims.lower.left,
-        LowerBodyState::Jump => anims.lower.jump,
-        LowerBodyState::Falling => anims.lower.falling,
-        LowerBodyState::Land => anims.lower.land,
-    };
-
-    let animations_to_fade = player
-        .playing_animations()
-        .filter_map(|(ix, _)| {
-            if anims.is_lower_body_anim(*ix) && *ix != target_lower_body_anim {
-                Some(*ix)
-            } else {
-                None
-            }
-        })
-        .collect();
-
-    let rate = 0.9;
-    let threshold = 0.01;
-
-    fade_out_animations(player, animations_to_fade, rate, threshold);
-    fade_in_animation(player, target_lower_body_anim, 1.0 / rate, threshold)
-        .set_speed(anims.get_speed(target_lower_body_anim))
-        .set_repeat(anims.get_repeat(target_lower_body_anim));
-
-    let target_upper_body_anim = anims.upper.idle;
-    player
-        .play(target_upper_body_anim)
-        .set_repeat(anims.get_repeat(target_upper_body_anim))
-        .set_weight(1.0)
-        .set_speed(anims.get_speed(anims.upper.idle));
-}
-
-fn fade_out_animations(
-    player: &mut AnimationPlayer,
-    anims: Vec<AnimationNodeIndex>,
-    rate: f32,
-    threshold: f32,
-) {
-    for index in anims {
-        let anim = player.animation_mut(index).unwrap();
-        if anim.weight() < threshold {
-            player.stop(index);
-        } else {
-            anim.set_weight(anim.weight() * rate);
-        }
-    }
-}
-
-fn fade_in_animation(
-    player: &mut AnimationPlayer,
-    anim: AnimationNodeIndex,
-    rate: f32,
-    threshold: f32,
-) -> &mut ActiveAnimation {
-    let is_playing_target_lower_body_anim = player.is_playing_animation(anim);
-    let target_anim = player.play(anim);
-
-    if is_playing_target_lower_body_anim {
-        let curr_weight = target_anim.weight();
-        target_anim.set_weight((curr_weight * rate).min(1.0));
-    } else {
-        target_anim.set_weight(threshold);
-    }
-
-    target_anim
 }
 
 fn transition_player_animations(
+    mut look_x_rotation: Local<f32>,
     mut airborne: Local<bool>,
     keys: Res<ButtonInput<KeyCode>>,
     mut players: Query<(
         &mut AnimationPlayer,
         &mut PlayerAnimationState,
-        &PlayerAnimationIndicies,
         &PlayerProceduralAnimationTargets,
     )>,
     player_roots: Query<Entity, With<Player>>,
     mut transforms: Query<(&mut Transform, &GlobalTransform)>,
     global_transforms: Query<&GlobalTransform>,
+    mut gizmos: Gizmos,
 ) {
-    let local_movement_direction = unit_vector_from_bools(
+    let local_movement_direction = utils::unit_vector_from_bools(
         keys.pressed(KeyCode::KeyW),
         keys.pressed(KeyCode::KeyS),
         keys.pressed(KeyCode::KeyA),
@@ -402,12 +150,11 @@ fn transition_player_animations(
         *airborne = !*airborne;
     }
 
-    let mut look_x_rotation = 0.0;
     if keys.pressed(KeyCode::ArrowUp) {
-        look_x_rotation += 1f32.to_radians();
+        *look_x_rotation += 1f32.to_radians();
     }
     if keys.pressed(KeyCode::ArrowDown) {
-        look_x_rotation -= 1f32.to_radians();
+        *look_x_rotation -= 1f32.to_radians();
     }
     let mut body_y_rotation = 0.0;
     if keys.pressed(KeyCode::ArrowLeft) {
@@ -425,105 +172,23 @@ fn transition_player_animations(
         .expect("root should have transform");
     root_local.rotate_local_y(body_y_rotation);
 
-    for (mut player, mut state, anims, proc_targets) in players.iter_mut() {
-        transition_animation_state(&input, anims, &mut state, &mut player);
+    for (mut player, mut state, proc_targets) in players.iter_mut() {
+        state.transition(&input, &player);
+        state.update_player(&mut player);
         let (mut spine_local, spine_global) = transforms
-            .get_mut(proc_targets.spine)
+            .get_mut(proc_targets.spine1)
             .expect("spine1 should have transform");
         let root_global = global_transforms.get(root_entity).unwrap();
-        rotate_spine_about_player_x(root_global, spine_global, &mut spine_local, look_x_rotation);
+        let gun_global = global_transforms.get(proc_targets.gun).unwrap();
+        rotate_spine_for_gun(
+            root_global,
+            gun_global,
+            spine_global,
+            &mut spine_local,
+            *look_x_rotation,
+            &mut gizmos,
+        );
     }
-}
-
-#[derive(Component)]
-struct PlayerProceduralAnimationTargets {
-    spine: Entity,
-}
-
-/// Recursively searches for a child entity by a path of names, starting from the given root entity.
-/// Returns the child entity if found, or `None` if the path is invalid/entity cannot be found.
-fn find_child_by_path(
-    scene: Entity,
-    path: &str,
-    children: &Query<&Children>,
-    names: &Query<&Name>,
-) -> Option<Entity> {
-    let mut parent = scene;
-
-    for segment in path.split('/') {
-        let old_parent = parent;
-
-        if let Ok(child_entities) = children.get(parent) {
-            for &child in child_entities {
-                if let Ok(name) = names.get(child) {
-                    if name.as_str() == segment {
-                        parent = child;
-                        break;
-                    }
-                }
-            }
-        }
-
-        if old_parent == parent {
-            return None;
-        }
-    }
-
-    Some(parent)
-}
-
-fn find_upwards<'a, T: Component>(
-    entity: Entity,
-    parents: &Query<&Parent>,
-    component: &'a Query<&T>,
-) -> Option<&'a T> {
-    let mut search = entity;
-    while let Ok(parent) = parents.get(search) {
-        if let Ok(comp) = component.get(parent.get()) {
-            return Some(comp);
-        };
-        search = parent.get();
-    }
-    return None;
-}
-
-/// Samples from the element in the array corresponding to the most aligned cardinal direction (forward, back, left, right) based on a Vec2.
-fn sample_cardinal<T>(array: &[T; 4], direction: Vec2) -> &T {
-    // Normalize the direction vector to handle non-unit vectors
-    let normalized_dir = direction.normalize_or_zero();
-    // Define the cardinal directions as unit vectors
-    let cardinal_directions = [
-        Vec2::new(0.0, 1.0),  // Forward
-        Vec2::new(0.0, -1.0), // Back
-        Vec2::new(-1.0, 0.0), // Left
-        Vec2::new(1.0, 0.0),  // Right
-    ];
-    // Find the index of the most aligned cardinal direction
-    let (max_index, _) = cardinal_directions
-        .iter()
-        .enumerate()
-        .map(|(i, &cardinal)| (i, normalized_dir.dot(cardinal)))
-        .max_by(|a, b| a.1.partial_cmp(&b.1).unwrap_or(std::cmp::Ordering::Equal))
-        .unwrap();
-    &array[max_index]
-}
-
-/// Constructs a unit vector (or zero vector) based on 4 booleans: [forward, back, left, right].
-fn unit_vector_from_bools(forward: bool, back: bool, left: bool, right: bool) -> Vec2 {
-    let mut vec = Vec2::ZERO;
-    if forward {
-        vec += Vec2::new(0.0, 1.0);
-    }
-    if back {
-        vec += Vec2::new(0.0, -1.0);
-    }
-    if left {
-        vec += Vec2::new(-1.0, 0.0);
-    }
-    if right {
-        vec += Vec2::new(1.0, 0.0);
-    }
-    vec.normalize_or_zero()
 }
 
 /// Rotates the spine by a given angle around the player's local X axis.
@@ -543,4 +208,95 @@ pub fn rotate_spine_about_player_x(
     let player_x = player_global.rotation() * Vec3::X;
     let spine_local_axis = spine_global.rotation().inverse() * player_x;
     spine_local.rotate_local_axis(Dir3::new(spine_local_axis).unwrap(), angle_radians);
+}
+
+fn rotate_spine_for_gun(
+    player_global: &GlobalTransform,
+    gun_global: &GlobalTransform,
+    spine_global: &GlobalTransform,
+    spine_local: &mut Transform,
+    target_gun_x_rotation: f32,
+    gizmos: &mut Gizmos,
+) {
+    let gun_forward_g = gun_global.rotation() * Vec3::Y;
+    // Show gun direction in global space.
+    gizmos.line(
+        gun_global.translation(),
+        gun_global.translation() + gun_forward_g * 1.0,
+        BLUE,
+    );
+
+    let player_z_g = player_global.rotation() * Vec3::Z;
+    let player_x_g = player_global.rotation() * Vec3::X;
+    let target_rotation = Quat::from_axis_angle(player_x_g, target_gun_x_rotation);
+    let look_direction_g = target_rotation * player_z_g;
+
+    // Show look direction in global space.
+    gizmos.line(
+        player_global.translation(),
+        player_global.translation() + look_direction_g * 1.0,
+        LIGHT_CYAN,
+    );
+
+    let spine_forward_g = spine_global.rotation() * Vec3::Z;
+    gizmos.line(
+        spine_global.translation(),
+        spine_global.translation() + spine_forward_g * 1.0,
+        LIGHT_CORAL,
+    );
+    gizmos.line(
+        spine_global.translation(),
+        spine_global.translation() + spine_global.rotation() * Vec3::Y * 1.0,
+        LIGHT_BLUE,
+    );
+
+
+    let gun_rotation_diff = quat_from_vectors(gun_forward_g, look_direction_g);
+    let ideal_gun_rotation = gun_rotation_diff * gun_forward_g;
+    gizmos.line(
+        gun_global.translation(),
+        gun_global.translation() + ideal_gun_rotation * 1.0,
+        LIGHT_CORAL,
+    );
+
+}
+
+fn quat_from_vectors(a: Vec3, b: Vec3) -> Quat {
+    let a_normalized = a.normalize();
+    let b_normalized = b.normalize();
+
+    let dot = a_normalized.dot(b_normalized);
+    let cross = a_normalized.cross(b_normalized);
+
+    // Handle edge cases
+    if dot > 0.9999 {
+        // Vectors are nearly identical, no rotation needed
+        return Quat::IDENTITY;
+    } else if dot < -0.9999 {
+        // Vectors are opposite; find an orthogonal vector for a 180° rotation
+        let orthogonal = if a_normalized.abs_diff_eq(Vec3::X, 1e-6) {
+            Vec3::Y
+        } else {
+            Vec3::X
+        };
+        let axis = a_normalized.cross(orthogonal).normalize();
+        return Quat::from_axis_angle(axis, std::f32::consts::PI);
+    }
+
+    // General case
+    let angle = dot.acos();
+    let axis = cross.normalize();
+    Quat::from_axis_angle(axis, angle)
+}
+
+fn draw_xyz_gizmo(mut gizmos: Gizmos) {
+    let origin = Vec3::ZERO;
+    let length = 1.0;
+
+    // X Axis (Red)
+    gizmos.line(origin, Vec3::new(length, 0.0, 0.0), RED);
+    // Y Axis (Green)
+    gizmos.line(origin, Vec3::new(0.0, length, 0.0), GREEN);
+    // Z Axis (Blue)
+    gizmos.line(origin, Vec3::new(0.0, 0.0, length), BLUE);
 }
