@@ -1,3 +1,5 @@
+use std::f32::consts::FRAC_PI_2;
+
 use anim::PlayerProceduralAnimationTargets;
 use bevy::{animation::AnimationTarget, color::palettes::css::*, prelude::*};
 use bevy_inspector_egui::quick::WorldInspectorPlugin;
@@ -116,7 +118,6 @@ fn init_player_animations(
 }
 
 fn transition_player_animations(
-    mut spawned_spine: Local<Option<Entity>>,
     mut look_x_rotation: Local<f32>,
     mut airborne: Local<bool>,
     keys: Res<ButtonInput<KeyCode>>,
@@ -126,11 +127,8 @@ fn transition_player_animations(
         &PlayerProceduralAnimationTargets,
     )>,
     player_roots: Query<Entity, With<Player>>,
-    mut transforms: Query<(&mut Transform, &GlobalTransform)>,
+    mut transforms: Query<&mut Transform>,
     global_transforms: Query<&GlobalTransform>,
-    mut gizmos: Gizmos,
-    mut commands: Commands,
-    parents: Query<&Parent>,
 ) {
     let local_movement_direction = utils::unit_vector_from_bools(
         keys.pressed(KeyCode::KeyW),
@@ -166,7 +164,7 @@ fn transition_player_animations(
     let Ok(root_entity) = player_roots.get_single() else {
         return;
     };
-    let (mut root_local, _) = transforms
+    let mut root_local = transforms
         .get_mut(root_entity)
         .expect("root should have transform");
     root_local.rotate_local_y(body_y_rotation);
@@ -174,141 +172,49 @@ fn transition_player_animations(
     for (mut player, mut state, proc_targets) in players.iter_mut() {
         state.transition(&input, &player);
         state.update_player(&mut player);
-        let (mut spine_local, spine_global) = transforms
+        let mut spine1_local = transforms
             .get_mut(proc_targets.spine1)
             .expect("spine1 should have transform");
 
-        let spine = match *spawned_spine {
-            Some(e) => e,
-            None => {
-                let parent = parents.get(proc_targets.spine1).unwrap();
-                let child = commands.spawn(Transform::default()).id();
-                commands.entity(parent.get()).add_child(child);
-                *spawned_spine = Some(child);
-                child
-            }
-        };
-
-        let Ok(spine_global) = global_transforms.get(spine) else {
-            continue;
-        };
+        let bullet_point_global = global_transforms.get(proc_targets.bullet_point).unwrap();
         let root_global = global_transforms.get(root_entity).unwrap();
         rotate_spine_to_x(
             root_global,
-            spine_global,
-            &mut spine_local,
+            bullet_point_global,
+            &mut spine1_local,
             *look_x_rotation,
-            &mut gizmos,
         );
     }
-}
-
-/// Rotates the spine by a given angle around the player's local X axis.
-/// This ensures the rotation is applied relative to the player's orientation.
-///
-/// # Arguments
-/// * `player_global` - The global transform of the player, whose local X axis defines the rotation axis.
-/// * `spine_global` - The current global transform of the spine.
-/// * `spine_local` - The mutable local transform of the spine bone to be rotated.
-/// * `angle_radians` - The angle in radians to rotate the spine by around the player's X axis.
-pub fn rotate_spine_about_player_x(
-    player_global: &GlobalTransform,
-    spine_global: &GlobalTransform,
-    spine_local: &mut Transform,
-    angle_radians: f32,
-) {
-    let player_x = player_global.rotation() * Vec3::X;
-    let spine_local_axis = spine_global.rotation().inverse() * player_x;
-    spine_local.rotate_local_axis(Dir3::new(spine_local_axis).unwrap(), angle_radians);
 }
 
 /// Rotates the spine bone to the target rotation about the player x-axis.
 fn rotate_spine_to_x(
     player_global: &GlobalTransform,
-    spine_global: &GlobalTransform,
-    spine_local: &mut Transform,
+    bullet_point_global: &GlobalTransform,
+    spine1_local: &mut Transform,
     target_gun_x_rotation: f32,
-    gizmos: &mut Gizmos,
 ) {
-    let player_x_local_to_spine =
-        spine_global.rotation().inverse() * player_global.rotation() * Vec3::X;
-    let target_rotation_local_to_spine =
-        Quat::from_axis_angle(player_x_local_to_spine, target_gun_x_rotation);
-    spine_local.rotation = target_rotation_local_to_spine;
-
-    // Show gun direction in global space.
-    gizmos.line(
-        spine_global.translation(),
-        spine_global.translation() + target_rotation_local_to_spine * Vec3::Z * 1.0,
-        LIGHT_CYAN,
-    );
-}
-
-// gizmos.line(
-//     spine_global.translation(),
-//     spine_global.translation() + spine_global.rotation() * player_x_l * 1.0,
-//     LIGHT_CORAL,
-// );
-
-// let player_z_g = player_global.rotation() * Vec3::Z;
-// let player_x_g = player_global.rotation() * Vec3::X;
-// let target_rotation = Quat::from_axis_angle(player_x_g, target_gun_x_rotation);
-// let look_direction_g = target_rotation * player_z_g;
-
-// // Show look direction in global space.
-// gizmos.line(
-//     player_global.translation(),
-//     player_global.translation() + look_direction_g * 1.0,
-//     LIGHT_CYAN,
-// );
-
-// let spine_forward_g = spine_global.rotation() * Vec3::Z;
-// gizmos.line(
-//     spine_global.translation(),
-//     spine_global.translation() + spine_forward_g * 1.0,
-//     LIGHT_CORAL,
-// );
-// gizmos.line(
-//     spine_global.translation(),
-//     spine_global.translation() + spine_global.rotation() * Vec3::Y * 1.0,
-//     LIGHT_BLUE,
-// );
-
-// let gun_rotation_diff = quat_from_vectors(gun_forward_g, look_direction_g);
-// let ideal_gun_rotation = gun_rotation_diff * gun_forward_g;
-// gizmos.line(
-//     gun_global.translation(),
-//     gun_global.translation() + ideal_gun_rotation * 1.0,
-//     LIGHT_CORAL,
-// );
-// }
-
-fn quat_from_vectors(a: Vec3, b: Vec3) -> Quat {
-    let a_normalized = a.normalize();
-    let b_normalized = b.normalize();
-
-    let dot = a_normalized.dot(b_normalized);
-    let cross = a_normalized.cross(b_normalized);
-
-    // Handle edge cases
-    if dot > 0.9999 {
-        // Vectors are nearly identical, no rotation needed
-        return Quat::IDENTITY;
-    } else if dot < -0.9999 {
-        // Vectors are opposite; find an orthogonal vector for a 180° rotation
-        let orthogonal = if a_normalized.abs_diff_eq(Vec3::X, 1e-6) {
-            Vec3::Y
-        } else {
-            Vec3::X
-        };
-        let axis = a_normalized.cross(orthogonal).normalize();
-        return Quat::from_axis_angle(axis, std::f32::consts::PI);
+    if target_gun_x_rotation > FRAC_PI_2 * 0.9 || target_gun_x_rotation < -FRAC_PI_2 * 0.9 {
+        warn!("gun x rotation too large");
+        return;
     }
 
-    // General case
-    let angle = dot.acos();
-    let axis = cross.normalize();
-    Quat::from_axis_angle(axis, angle)
+    // Compute the target gun rotation in bullet space.
+    let global_target = player_global.rotation()
+        * Quat::from_axis_angle(Vec3::X, target_gun_x_rotation)
+        * Vec3::Z;
+
+    // Compute the current forward direction of the bullet_point in global space.
+    let current_bullet_forward = bullet_point_global.rotation() * Vec3::Y;
+
+    // Compute the rotation needed to align the current bullet_point forward to the target direction.
+    let alignment_rotation = Quat::from_rotation_arc(current_bullet_forward, global_target);
+
+    // Adjust the spine's local rotation to include the alignment.
+    spine1_local.rotation = spine1_local.rotation * alignment_rotation;
+    // Stop Z rotation so that the player stays upright.
+    let (x, y, _) = spine1_local.rotation.to_euler(EulerRot::XYZ);
+    spine1_local.rotation = Quat::from_euler(EulerRot::XYZ, x, y, 0.0);
 }
 
 fn draw_xyz_gizmo(mut gizmos: Gizmos) {

@@ -16,8 +16,8 @@ const PLAYER_ANIM_INDICES: [&str; 8] = [
     "Idle",
     "IdleUpper",
     "StrafeLeft",
-    "StrafeRight",
     "StrafeLeft.001",
+    "StrafeRight",
     "TPose",
     "WalkBackward",
     "WalkForward",
@@ -111,10 +111,8 @@ impl PlayerAnimations {
 
 #[derive(Component)]
 pub struct PlayerProceduralAnimationTargets {
-    pub hips: Entity,
-    pub spine: Entity,
     pub spine1: Entity,
-    pub gun: Entity,
+    pub bullet_point: Entity,
 }
 
 pub fn load_player_animations(
@@ -183,6 +181,13 @@ pub fn load_player_animations(
     (anims, proc_targets, graph)
 }
 
+#[derive(PartialEq)]
+enum Mask {
+    Upper,
+    Lower,
+    Both,
+}
+
 /// groups. The param `entity` should be the entity with an AnimationPlayer.
 fn init_mixamo_rig_masks(
     root: Entity,
@@ -191,81 +196,41 @@ fn init_mixamo_rig_masks(
     names: &Query<&Name>,
     animation_targets: &Query<&AnimationTarget>,
 ) -> PlayerProceduralAnimationTargets {
-    // Joints to mask out. All decendants (and this one) will be masked out.
-    let upper_body_joint_paths =
-        ["mixamorig:Hips/mixamorig:Spine/mixamorig:Spine1/mixamorig:Spine2"];
-    let lower_body_joint_paths = [
-        "mixamorig:Hips/mixamorig:LeftUpLeg",
-        "mixamorig:Hips/mixamorig:RightUpLeg",
-    ];
-    // Isolates don't mask decendants.
-    let isolated_lower_body_joint_paths = [
-        "mixamorig:Hips/mixamorig:Spine",
-        "mixamorig:Hips",
-    ];
-    let isolated_fully_mask = [
-        "mixamorig:Hips/mixamorig:Spine/mixamorig:Spine1",
+    // (name, should masks decendants, mask type)
+    let masks = &[
+        ("mixamorig:Spine2", true, Mask::Upper),
+        ("mixamorig:LeftUpLeg", true, Mask::Lower),
+        ("mixamorig:RightUpLeg", true, Mask::Lower),
+        ("mixamorig:Spine", false, Mask::Lower),
+        ("mixamorig:Hips", false, Mask::Lower),
+        ("mixamorig:Spine1", false, Mask::Both),
     ];
 
-    for joint_path in isolated_fully_mask {
-        let entity = find_child_by_path(root, joint_path, &children, &names)
+    for (name, mask_decendants, mask_type) in masks {
+        let entity = find_child_with_name(root, name, &children, &names)
             .expect("upper body joint not found");
-        let target = animation_targets.get(entity).expect(&format!(
-            "isolate {} should have animation target",
-            joint_path
-        ));
-        graph.add_target_to_mask_group(target.id, LOWER_BODY_MASK_GROUP);
-        graph.add_target_to_mask_group(target.id, UPPER_BODY_MASK_GROUP);
-    }
-
-    for joint_path in upper_body_joint_paths {
-        // Find entity from joint path.
-        let upper_body_joint_entity = find_child_by_path(root, joint_path, &children, &names)
-            .expect("upper body joint not found");
-
-        // Add every joint for every decendant (including the joint path).
-        let entities_to_mask = get_all_descendants(upper_body_joint_entity, &children);
-        let targets_to_mask = map_query(entities_to_mask, &animation_targets);
-        for target in targets_to_mask {
-            graph.add_target_to_mask_group(target.id, UPPER_BODY_MASK_GROUP);
-        }
-    }
-
-    // Same thing here for both legs.
-    for joint_path in lower_body_joint_paths {
-        let lower_body_joint_entity = find_child_by_path(root, joint_path, &children, &names)
-            .expect("lower body joint not found");
-
-        let entities_to_mask = get_all_descendants(lower_body_joint_entity, &children);
-        let targets_to_mask = map_query(entities_to_mask, &animation_targets);
-        for target in targets_to_mask.iter() {
-            graph.add_target_to_mask_group(target.id, LOWER_BODY_MASK_GROUP);
-        }
-    }
-
-    // The root of the character (mixamorig:Hips) is still animated by both upper and
-    // lower. It is bad to have the same target animated twice by an additive node. Here
-    // we decide to assign the hip bone (but not decendants, which we already assigned to
-    // either upper or lower) to the lower body.
-    for isolate in isolated_lower_body_joint_paths {
-        let entity = find_child_by_path(root, isolate, &children, &names)
-            .expect(&format!("isolate bone {} should exist", isolate));
         let target = animation_targets
             .get(entity)
-            .expect(&format!("isolate {} should have animation target", isolate));
-        graph.add_target_to_mask_group(target.id, LOWER_BODY_MASK_GROUP);
+            .expect(&format!("isolate {} should have animation target", name));
+
+        let targets = if *mask_decendants {
+            let entities_to_mask = get_all_descendants(entity, &children);
+            map_query(entities_to_mask, &animation_targets)
+        } else {
+            vec![*target]
+        };
+        for target in targets {
+            if *mask_type == Mask::Lower || *mask_type == Mask::Both {
+                graph.add_target_to_mask_group(target.id, LOWER_BODY_MASK_GROUP);
+            }
+            if *mask_type == Mask::Upper || *mask_type == Mask::Both {
+                graph.add_target_to_mask_group(target.id, UPPER_BODY_MASK_GROUP);
+            }
+        }
     }
 
     PlayerProceduralAnimationTargets {
-        hips: find_child_with_name(root, "mixamorig:Hips", children, names).unwrap(),
-        spine: find_child_with_name(root, "mixamorig:Spine", children, names).unwrap(),
-        spine1: find_child_by_path(
-            root,
-            "mixamorig:Hips/mixamorig:Spine/mixamorig:Spine1",
-            children,
-            names,
-        )
-        .expect("spine1 not found"),
-        gun: find_child_with_name(root, "BlasterN", children, names).expect("shotgun not found"),
+        spine1: find_child_with_name(root, "mixamorig:Spine1", children, names).unwrap(),
+        bullet_point: find_child_with_name(root, "BlasterN", children, names).unwrap(),
     }
 }
