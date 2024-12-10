@@ -1,20 +1,25 @@
-use std::f32::consts::FRAC_PI_2;
-
 use anim::PlayerProceduralAnimationTargets;
-use bevy::{animation::AnimationTarget, color::palettes::css::*, prelude::*};
-use bevy_inspector_egui::quick::WorldInspectorPlugin;
+use bevy::{
+    animation::AnimationTarget,
+    color::palettes::css::*,
+    prelude::*,
+    render::{mesh::skinning::SkinnedMesh, view::NoFrustumCulling},
+};
 use state::{PlayerAnimationInput, PlayerAnimationState};
+use tracer::Tracer;
 use utils::{freecam::FreeCamera, toggle_cursor_grab_with_esc};
 
 mod anim;
 mod state;
+mod tracer;
 mod utils;
 
 fn main() {
     App::new()
         .add_plugins(DefaultPlugins)
-        .add_plugins(WorldInspectorPlugin::new())
+        // .add_plugins(WorldInspectorPlugin::new())
         .add_plugins(utils::freecam::FreeCameraPlugin)
+        .add_plugins(tracer::TracerPlugin)
         .add_systems(Startup, setup)
         .add_systems(
             Update,
@@ -24,6 +29,7 @@ fn main() {
                 transition_player_animations,
                 toggle_cursor_grab_with_esc,
                 toggle_freecam,
+                disable_culling_for_skinned_meshes,
             ),
         )
         .run();
@@ -129,6 +135,8 @@ fn transition_player_animations(
     player_roots: Query<Entity, With<Player>>,
     mut transforms: Query<&mut Transform>,
     global_transforms: Query<&GlobalTransform>,
+    mut commands: Commands,
+    mut gizmos: Gizmos,
 ) {
     let local_movement_direction = utils::unit_vector_from_bools(
         keys.pressed(KeyCode::KeyW),
@@ -183,7 +191,22 @@ fn transition_player_animations(
             bullet_point_global,
             &mut spine1_local,
             *look_x_rotation,
+            &mut gizmos,
+            keys.just_pressed(KeyCode::KeyU),
         );
+
+        if keys.just_pressed(KeyCode::KeyT) {
+            commands.spawn((
+                Tracer {
+                    end: bullet_point_global.translation()
+                        + bullet_point_global.rotation() * Vec3::Y * 10.0,
+                },
+                Transform::from_translation(
+                    bullet_point_global.translation()
+                        + bullet_point_global.rotation() * Vec3::Y * 0.3,
+                ),
+            ));
+        }
     }
 }
 
@@ -193,26 +216,48 @@ fn rotate_spine_to_x(
     bullet_point_global: &GlobalTransform,
     spine1_local: &mut Transform,
     target_gun_x_rotation: f32,
+    _gizmos: &mut Gizmos,
+    _sync: bool,
 ) {
-    if target_gun_x_rotation > FRAC_PI_2 * 0.9 || target_gun_x_rotation < -FRAC_PI_2 * 0.9 {
-        warn!("gun x rotation too large");
-        return;
-    }
+    // if target_gun_x_rotation > FRAC_PI_2 * 0.9 || target_gun_x_rotation < -FRAC_PI_2 * 0.9 {
+    //     warn!("gun x rotation too large");
+    //     return;
+    // }
 
-    // Compute the target gun rotation in bullet space.
-    let global_target = player_global.rotation()
-        * Quat::from_axis_angle(Vec3::X, target_gun_x_rotation)
-        * Vec3::Z;
+    // Compute the target gun rotation in global space.
+    let target_vec = Quat::from_axis_angle(Vec3::X, target_gun_x_rotation) * Vec3::Z;
+    let global_target = player_global
+        .affine()
+        .transform_vector3(target_vec)
+        .normalize(); // * Vec3::Z;
 
     // Compute the current forward direction of the bullet_point in global space.
-    let current_bullet_forward = bullet_point_global.rotation() * Vec3::Y;
+    let current_bullet_forward = bullet_point_global
+        .affine()
+        .transform_vector3(Vec3::Y)
+        .normalize();
 
     // Compute the rotation needed to align the current bullet_point forward to the target direction.
-    let alignment_rotation = Quat::from_rotation_arc(current_bullet_forward, global_target);
+    let alignment_rotation = Quat::from_rotation_arc(
+        player_global.rotation().inverse() * current_bullet_forward,
+        player_global.rotation().inverse() * global_target,
+    );
+
+    // let mut draw_dir = |dir: Vec3, color: Srgba| {
+    //     gizmos.line(
+    //         Vec3::Y + player_global.translation(),
+    //         Vec3::Y + player_global.translation() + dir,
+    //         color,
+    //     );
+    // };
+
+    // draw_dir(current_bullet_forward, ORANGE);
+    // draw_dir(global_target, GREEN);
+    // draw_dir(alignment_rotation * Vec3::Z, BLUE);
 
     // Adjust the spine's local rotation to include the alignment.
-    spine1_local.rotation = spine1_local.rotation * alignment_rotation;
     // Stop Z rotation so that the player stays upright.
+    spine1_local.rotation = spine1_local.rotation * alignment_rotation;
     let (x, y, _) = spine1_local.rotation.to_euler(EulerRot::XYZ);
     spine1_local.rotation = Quat::from_euler(EulerRot::XYZ, x, y, 0.0);
 }
@@ -227,4 +272,13 @@ fn draw_xyz_gizmo(mut gizmos: Gizmos) {
     gizmos.line(origin, Vec3::new(0.0, length, 0.0), GREEN);
     // Z Axis (Blue)
     gizmos.line(origin, Vec3::new(0.0, 0.0, length), BLUE);
+}
+
+fn disable_culling_for_skinned_meshes(
+    mut commands: Commands,
+    skinned: Query<Entity, Added<SkinnedMesh>>,
+) {
+    for entity in &skinned {
+        commands.entity(entity).insert(NoFrustumCulling);
+    }
 }
