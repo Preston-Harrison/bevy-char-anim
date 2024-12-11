@@ -187,38 +187,6 @@ pub fn unit_vector_from_bools(forward: bool, back: bool, left: bool, right: bool
     vec.normalize_or_zero()
 }
 
-/// Recursively searches for a child entity by a path of names, starting from the given root entity.
-/// Returns the child entity if found, or `None` if the path is invalid/entity cannot be found.
-pub fn find_child_by_path(
-    scene: Entity,
-    path: &str,
-    children: &Query<&Children>,
-    names: &Query<&Name>,
-) -> Option<Entity> {
-    let mut parent = scene;
-
-    for segment in path.split('/') {
-        let old_parent = parent;
-
-        if let Ok(child_entities) = children.get(parent) {
-            for &child in child_entities {
-                if let Ok(name) = names.get(child) {
-                    if name.as_str() == segment {
-                        parent = child;
-                        break;
-                    }
-                }
-            }
-        }
-
-        if old_parent == parent {
-            return None;
-        }
-    }
-
-    Some(parent)
-}
-
 pub fn find_child_with_name(
     root: Entity,
     name: &str,

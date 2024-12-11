@@ -1,3 +1,5 @@
+use std::f32::consts::FRAC_PI_2;
+
 use anim::PlayerProceduralAnimationTargets;
 use bevy::{
     animation::AnimationTarget,
@@ -17,7 +19,6 @@ mod utils;
 fn main() {
     App::new()
         .add_plugins(DefaultPlugins)
-        // .add_plugins(WorldInspectorPlugin::new())
         .add_plugins(utils::freecam::FreeCameraPlugin)
         .add_plugins(tracer::TracerPlugin)
         .add_plugins(anim::AnimationPlugin)
@@ -145,7 +146,6 @@ fn transition_player_animations(
     mut transforms: Query<&mut Transform>,
     global_transforms: Query<&GlobalTransform>,
     mut commands: Commands,
-    mut gizmos: Gizmos,
 ) {
     let local_movement_direction = utils::unit_vector_from_bools(
         keys.pressed(KeyCode::KeyW),
@@ -153,10 +153,6 @@ fn transition_player_animations(
         keys.pressed(KeyCode::KeyA),
         keys.pressed(KeyCode::KeyD),
     );
-
-    if keys.just_pressed(KeyCode::KeyJ) {
-        *airborne = !*airborne;
-    }
 
     if keys.pressed(KeyCode::ArrowUp) {
         *look_x_rotation += 1f32.to_radians();
@@ -176,13 +172,16 @@ fn transition_player_animations(
         is_grounded: !*airborne,
         local_movement_direction,
     };
+    if keys.just_pressed(KeyCode::KeyJ) {
+        *airborne = !*airborne;
+    }
 
     let Ok(root_entity) = player_roots.get_single() else {
         return;
     };
 
     let mut root_local = transforms.get_mut(root_entity).unwrap();
-    if input.local_movement_direction.length() < 0.1 {
+    if input.local_movement_direction.length() < 0.1 && input.is_grounded {
         if *upper_body_y > 45f32.to_radians() {
             *lower_body_target_y += 45f32.to_radians();
         } else if *upper_body_y < -45f32.to_radians() {
@@ -202,10 +201,7 @@ fn transition_player_animations(
     for (mut player, mut state, proc_targets) in players.iter_mut() {
         state.transition(&input, &player);
         state.update_player(&mut player);
-        let mut spine1_local = transforms
-            .get_mut(proc_targets.spine1)
-            .expect("spine1 should have transform");
-
+        let mut spine1_local = transforms.get_mut(proc_targets.spine1).unwrap();
         let bullet_point_global = global_transforms.get(proc_targets.bullet_point).unwrap();
         let spine1_global = global_transforms.get(proc_targets.spine1).unwrap();
         let root_global = global_transforms.get(root_entity).unwrap();
@@ -216,8 +212,6 @@ fn transition_player_animations(
             &mut spine1_local,
             *look_x_rotation,
             *upper_body_y,
-            &mut gizmos,
-            keys.just_pressed(KeyCode::KeyU),
         );
 
         if keys.just_pressed(KeyCode::KeyT) {
@@ -243,13 +237,11 @@ fn rotate_spine_to_x(
     spine1_local: &mut Transform,
     target_gun_x_rotation: f32,
     target_gun_y_rotation: f32,
-    _gizmos: &mut Gizmos,
-    _sync: bool,
 ) {
-    // if target_gun_x_rotation > FRAC_PI_2 * 0.9 || target_gun_x_rotation < -FRAC_PI_2 * 0.9 {
-    //     warn!("gun x rotation too large");
-    //     return;
-    // }
+    if target_gun_x_rotation > FRAC_PI_2 * 0.9 || target_gun_x_rotation < -FRAC_PI_2 * 0.9 {
+        warn!("gun x rotation too large");
+        return;
+    }
 
     // Compute the target gun rotation in global space.
     let target_vec = Quat::from_axis_angle(Vec3::Y, target_gun_y_rotation)
@@ -271,27 +263,6 @@ fn rotate_spine_to_x(
     spine1_local.rotation = spine1_local
         .rotation
         .rotate_towards(Quat::from_axis_angle(Vec3::Y, 0.0), 0.1);
-
-    // let mut draw_dir = |dir: Vec3, color: Srgba| {
-    //     gizmos.line(
-    //         Vec3::Y + player_global.translation(),
-    //         Vec3::Y + player_global.translation() + dir,
-    //         color,
-    //     );
-    // };
-
-    // draw_dir(current_bullet_forward, ORANGE);
-    // draw_dir(global_target, GREEN);
-    // draw_dir(alignment_rotation * Vec3::Z, BLUE);
-
-    // draw_dir(
-    //     alignment_rotation * current_bullet_forward,
-    //     PINK,
-    // );
-
-    // if !sync {
-    //     return;
-    // }
 }
 
 fn draw_xyz_gizmo(mut gizmos: Gizmos) {

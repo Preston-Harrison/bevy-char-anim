@@ -31,7 +31,6 @@ impl PlayerAnimationState {
     pub fn transition(&mut self, input: &PlayerAnimationInput, player: &AnimationPlayer) {
         let is_finished = |anim| player.animation(anim).unwrap().is_finished();
 
-        info!("{:?}", self.lower_body);
         self.lower_body = match self.lower_body {
             LowerBodyState::Land => {
                 if is_finished(self.anims.get(AnimationName::Land)) {
@@ -51,13 +50,12 @@ impl PlayerAnimationState {
                     LowerBodyState::Falling
                 }
             }
-            _ if input.just_jumped => LowerBodyState::Jump,
+            _ if input.just_jumped => {
+                info!("jumped");
+                LowerBodyState::Jump
+            },
             _ if input.local_movement_direction.length() < 0.1 => {
-                // if input.turn_direction > 0.0001 {
-                //     LowerBodyState::TurnLeft
-                // } else {
-                LowerBodyState::Idle
-                // }
+                    LowerBodyState::Idle
             }
             _ => *sample_cardinal(
                 &[
