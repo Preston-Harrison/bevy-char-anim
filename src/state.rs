@@ -7,6 +7,7 @@ use crate::utils::*;
 pub struct PlayerAnimationInput {
     /// +Y is forward
     pub local_movement_direction: Vec2,
+    pub turn_direction: f32,
 
     pub just_jumped: bool,
     pub is_grounded: bool,
@@ -31,6 +32,7 @@ impl PlayerAnimationState {
     pub fn transition(&mut self, input: &PlayerAnimationInput, player: &AnimationPlayer) {
         let is_finished = |anim| player.animation(anim).unwrap().is_finished();
 
+        info!("{:?}", self.lower_body);
         self.lower_body = match self.lower_body {
             LowerBodyState::Land => {
                 if is_finished(self.anims.get(AnimationName::Land)) {
@@ -51,7 +53,13 @@ impl PlayerAnimationState {
                 }
             }
             _ if input.just_jumped => LowerBodyState::Jump,
-            _ if input.local_movement_direction.length() < 0.1 => LowerBodyState::Idle,
+            _ if input.local_movement_direction.length() < 0.1 => {
+                if input.turn_direction > 0.0001 {
+                    LowerBodyState::TurnLeft
+                } else {
+                    LowerBodyState::Idle
+                }
+            },
             _ => *sample_cardinal(
                 &[
                     LowerBodyState::Forward,
@@ -74,6 +82,7 @@ impl PlayerAnimationState {
             LowerBodyState::Jump => self.anims.get(AnimationName::Jump),
             LowerBodyState::Falling => self.anims.get(AnimationName::Falling),
             LowerBodyState::Land => self.anims.get(AnimationName::Land),
+            LowerBodyState::TurnLeft => self.anims.get(AnimationName::TurnLeft45),
         };
 
         let animations_to_fade = player
@@ -149,4 +158,5 @@ enum LowerBodyState {
     Jump,
     Falling,
     Land,
+    TurnLeft,
 }

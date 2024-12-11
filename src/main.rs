@@ -1,3 +1,5 @@
+use std::f32::consts::FRAC_PI_2;
+
 use anim::PlayerProceduralAnimationTargets;
 use bevy::{
     animation::AnimationTarget,
@@ -20,6 +22,7 @@ fn main() {
         // .add_plugins(WorldInspectorPlugin::new())
         .add_plugins(utils::freecam::FreeCameraPlugin)
         .add_plugins(tracer::TracerPlugin)
+        .add_plugins(anim::AnimationPlugin)
         .add_systems(Startup, setup)
         .add_systems(
             Update,
@@ -97,6 +100,7 @@ fn init_player_animations(
     children: Query<&Children>,
     parents: Query<&Parent>,
     names: Query<&Name>,
+    transforms: Query<&Transform>,
     players: Query<&Player>,
     mut animation_graphs: ResMut<Assets<AnimationGraph>>,
     animation_targets: Query<&AnimationTarget>,
@@ -111,6 +115,9 @@ fn init_player_animations(
             entity,
             &asset_server,
             &children,
+            &parents,
+            &transforms,
+            commands.reborrow(),
             &names,
             &animation_targets,
         );
@@ -145,12 +152,6 @@ fn transition_player_animations(
         keys.pressed(KeyCode::KeyD),
     );
 
-    let input = PlayerAnimationInput {
-        just_jumped: !*airborne && keys.just_pressed(KeyCode::KeyJ),
-        is_grounded: !*airborne,
-        local_movement_direction,
-    };
-
     if keys.just_pressed(KeyCode::KeyJ) {
         *airborne = !*airborne;
     }
@@ -168,6 +169,13 @@ fn transition_player_animations(
     if keys.pressed(KeyCode::ArrowRight) {
         body_y_rotation -= 1f32.to_radians();
     }
+
+    let input = PlayerAnimationInput {
+        just_jumped: !*airborne && keys.just_pressed(KeyCode::KeyJ),
+        is_grounded: !*airborne,
+        local_movement_direction,
+        turn_direction: body_y_rotation,
+    };
 
     let Ok(root_entity) = player_roots.get_single() else {
         return;
@@ -219,17 +227,17 @@ fn rotate_spine_to_x(
     _gizmos: &mut Gizmos,
     _sync: bool,
 ) {
-    // if target_gun_x_rotation > FRAC_PI_2 * 0.9 || target_gun_x_rotation < -FRAC_PI_2 * 0.9 {
-    //     warn!("gun x rotation too large");
-    //     return;
-    // }
+    if target_gun_x_rotation > FRAC_PI_2 * 0.9 || target_gun_x_rotation < -FRAC_PI_2 * 0.9 {
+        warn!("gun x rotation too large");
+        return;
+    }
 
     // Compute the target gun rotation in global space.
     let target_vec = Quat::from_axis_angle(Vec3::X, target_gun_x_rotation) * Vec3::Z;
     let global_target = player_global
         .affine()
         .transform_vector3(target_vec)
-        .normalize(); // * Vec3::Z;
+        .normalize();
 
     // Compute the current forward direction of the bullet_point in global space.
     let current_bullet_forward = bullet_point_global

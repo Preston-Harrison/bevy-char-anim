@@ -7,18 +7,28 @@ use bevy::{
 
 use crate::utils::*;
 
+pub struct AnimationPlugin;
+
+impl Plugin for AnimationPlugin {
+    fn build(&self, app: &mut App) {
+        app.add_systems(Update, cancel_translation);
+    }
+}
+
 const LOWER_BODY_MASK_GROUP: u32 = 1;
 const LOWER_BODY_MASK: u64 = 1 << LOWER_BODY_MASK_GROUP;
 const UPPER_BODY_MASK_GROUP: u32 = 2;
 const UPPER_BODY_MASK: u64 = 1 << UPPER_BODY_MASK_GROUP;
 
-const PLAYER_ANIM_INDICES: [&str; 8] = [
+const PLAYER_ANIM_INDICES: [&str; 10] = [
+    "FallingIdle",
     "Idle",
     "IdleUpper",
+    "JumpDown",
     "StrafeLeft",
-    "StrafeLeft.001",
     "StrafeRight",
     "TPose",
+    "TurnLeft45",
     "WalkBackward",
     "WalkForward",
 ];
@@ -32,6 +42,7 @@ struct PlayerAnimationPaths {
     jump: AssetPath<'static>,
     falling: AssetPath<'static>,
     land: AssetPath<'static>,
+    turn_left_45: AssetPath<'static>,
 }
 
 impl Default for PlayerAnimationPaths {
@@ -51,9 +62,10 @@ impl Default for PlayerAnimationPaths {
             forward: get_anim("WalkForward"),
             left: get_anim("StrafeLeft"),
             right: get_anim("StrafeRight"),
-            jump: get_anim("TPose"),
-            falling: get_anim("TPose"),
-            land: get_anim("TPose"),
+            jump: get_anim("FallingIdle"),
+            falling: get_anim("FallingIdle"),
+            land: get_anim("JumpDown"),
+            turn_left_45: get_anim("TurnLeft45"),
         }
     }
 }
@@ -69,6 +81,7 @@ pub enum AnimationName {
     Jump,
     Falling,
     Land,
+    TurnLeft45,
 }
 
 impl AnimationName {
@@ -119,6 +132,9 @@ pub fn load_player_animations(
     entity: Entity,
     asset_server: &AssetServer,
     children: &Query<&Children>,
+    parents: &Query<&Parent>,
+    transforms: &Query<&Transform>,
+    commands: Commands,
     names: &Query<&Name>,
     animation_targets: &Query<&AnimationTarget>,
 ) -> (
@@ -167,12 +183,34 @@ pub fn load_player_animations(
     let land_ix = graph.add_clip_with_mask(land_clip, UPPER_BODY_MASK, 1.0, lower_body_blend);
     let land = (AnimationName::Land, land_ix);
 
-    let proc_targets =
-        init_mixamo_rig_masks(entity, &mut graph, &children, &names, &animation_targets);
+    let turn_left_45_clip = asset_server.load(player_anims.turn_left_45.clone());
+    let turn_left_45_ix =
+        graph.add_clip_with_mask(turn_left_45_clip, UPPER_BODY_MASK, 1.0, lower_body_blend);
+    let turn_left_45 = (AnimationName::TurnLeft45, turn_left_45_ix);
+
+    let proc_targets = init_mixamo_rig_masks(
+        entity,
+        &mut graph,
+        &children,
+        &parents,
+        &names,
+        &transforms,
+        &animation_targets,
+        commands,
+    );
 
     let anims = PlayerAnimations {
         anims: [
-            forward, back, idle_upper, idle_lower, left, right, jump, falling, land,
+            forward,
+            back,
+            idle_upper,
+            idle_lower,
+            left,
+            right,
+            jump,
+            falling,
+            land,
+            turn_left_45,
         ]
         .into_iter()
         .collect(),
@@ -193,8 +231,11 @@ fn init_mixamo_rig_masks(
     root: Entity,
     graph: &mut AnimationGraph,
     children: &Query<&Children>,
+    parents: &Query<&Parent>,
     names: &Query<&Name>,
+    transforms: &Query<&Transform>,
     animation_targets: &Query<&AnimationTarget>,
+    mut commands: Commands,
 ) -> PlayerProceduralAnimationTargets {
     // (name, should masks decendants, mask type)
     let masks = &[
@@ -229,8 +270,52 @@ fn init_mixamo_rig_masks(
         }
     }
 
+    let hips = find_child_with_name(root, "mixamorig:Hips", children, names).unwrap();
+    let hip_parent = parents.get(hips).unwrap();
+    let canceller = commands
+        .spawn(TranslationCanceller {
+            offset: transforms.get(hips).unwrap().translation,
+            enabled: false,
+        })
+        .id();
+    commands.entity(hips).set_parent(canceller);
+    commands.entity(canceller).set_parent(hip_parent.get());
+
     PlayerProceduralAnimationTargets {
         spine1: find_child_with_name(root, "mixamorig:Spine1", children, names).unwrap(),
         bullet_point: find_child_with_name(root, "BlasterN", children, names).unwrap(),
+    }
+}
+
+#[derive(Component)]
+#[require(Transform)]
+struct TranslationCanceller {
+    offset: Vec3,
+    enabled: bool,
+}
+
+fn cancel_translation(
+    mut cancellers: Query<
+        (&mut Transform, &Children, &TranslationCanceller),
+        With<TranslationCanceller>,
+    >,
+    transforms: Query<&Transform, Without<TranslationCanceller>>,
+) {
+    for (mut transform, children, canceller) in cancellers.iter_mut() {
+        if !canceller.enabled {
+            continue;
+        };
+        if children.len() > 1 {
+            warn!("cannot cancel translation for more than one child");
+            continue;
+        };
+        let Some(child) = children.get(0) else {
+            continue;
+        };
+        let Ok(child_transform) = transforms.get(*child) else {
+            warn!("child of translation canceller has no transform");
+            continue;
+        };
+        transform.translation = -child_transform.translation + canceller.offset;
     }
 }
