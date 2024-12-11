@@ -7,7 +7,6 @@ use crate::utils::*;
 pub struct PlayerAnimationInput {
     /// +Y is forward
     pub local_movement_direction: Vec2,
-    pub turn_direction: f32,
 
     pub just_jumped: bool,
     pub is_grounded: bool,
@@ -54,12 +53,12 @@ impl PlayerAnimationState {
             }
             _ if input.just_jumped => LowerBodyState::Jump,
             _ if input.local_movement_direction.length() < 0.1 => {
-                if input.turn_direction > 0.0001 {
-                    LowerBodyState::TurnLeft
-                } else {
-                    LowerBodyState::Idle
-                }
-            },
+                // if input.turn_direction > 0.0001 {
+                //     LowerBodyState::TurnLeft
+                // } else {
+                LowerBodyState::Idle
+                // }
+            }
             _ => *sample_cardinal(
                 &[
                     LowerBodyState::Forward,
@@ -82,7 +81,6 @@ impl PlayerAnimationState {
             LowerBodyState::Jump => self.anims.get(AnimationName::Jump),
             LowerBodyState::Falling => self.anims.get(AnimationName::Falling),
             LowerBodyState::Land => self.anims.get(AnimationName::Land),
-            LowerBodyState::TurnLeft => self.anims.get(AnimationName::TurnLeft45),
         };
 
         let animations_to_fade = player
@@ -101,15 +99,31 @@ impl PlayerAnimationState {
 
         fade_out_animations(player, animations_to_fade, rate, threshold);
         fade_in_animation(player, target_lower_body_anim, 1.0 / rate, threshold)
-            .set_speed(self.anims.get_name(target_lower_body_anim).get_default_speed())
-            .set_repeat(self.anims.get_name(target_lower_body_anim).get_default_repeat());
+            .set_speed(
+                self.anims
+                    .get_name(target_lower_body_anim)
+                    .get_default_speed(),
+            )
+            .set_repeat(
+                self.anims
+                    .get_name(target_lower_body_anim)
+                    .get_default_repeat(),
+            );
 
         let target_upper_body_anim = self.anims.get(AnimationName::IdleUpperBody);
         player
             .play(target_upper_body_anim)
             .set_weight(1.0)
-            .set_speed(self.anims.get_name(target_upper_body_anim).get_default_speed())
-            .set_repeat(self.anims.get_name(target_upper_body_anim).get_default_repeat());
+            .set_speed(
+                self.anims
+                    .get_name(target_upper_body_anim)
+                    .get_default_speed(),
+            )
+            .set_repeat(
+                self.anims
+                    .get_name(target_upper_body_anim)
+                    .get_default_repeat(),
+            );
     }
 }
 
@@ -158,5 +172,4 @@ enum LowerBodyState {
     Jump,
     Falling,
     Land,
-    TurnLeft,
 }
