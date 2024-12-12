@@ -112,6 +112,8 @@ fn init_player_animations(
             &children,
             &names,
             &animation_targets,
+            commands.reborrow(),
+            &parents,
         );
 
         commands
@@ -150,10 +152,14 @@ fn transition_player_animations(
         *look_y_rotation -= 1f32.to_radians();
     }
 
+    let is_grounded = !*airborne;
+    let is_sprinting = is_grounded
+        && keys.pressed(KeyCode::ShiftLeft)
+        && utils::most_aligned(local_movement_direction) == IVec2::Y;
     let input = PlayerAnimationInput {
         just_jumped: !*airborne && keys.just_pressed(KeyCode::KeyJ),
-        is_sprinting: keys.pressed(KeyCode::ShiftLeft) && utils::most_aligned(local_movement_direction) == IVec2::Y,
-        is_grounded: !*airborne,
+        is_sprinting,
+        is_grounded,
         local_movement_direction,
         look_y: *look_y_rotation,
         look_x: *look_x_rotation,
@@ -166,7 +172,9 @@ fn transition_player_animations(
     if let Ok(mut state) = players.get_single_mut() {
         state.set_input(input);
 
-        let bullet_point_global = global_transforms.get(state.proc_targets.bullet_point).unwrap();
+        let bullet_point_global = global_transforms
+            .get(state.proc_targets.bullet_point)
+            .unwrap();
         if keys.just_pressed(KeyCode::KeyT) {
             commands.spawn((
                 Tracer {

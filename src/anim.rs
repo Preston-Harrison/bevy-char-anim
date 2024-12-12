@@ -76,7 +76,7 @@ impl Default for PlayerAnimationPaths {
     }
 }
 
-#[derive(PartialEq, Eq, Hash, Clone, Copy)]
+#[derive(PartialEq, Eq, Hash, Clone, Copy, Debug)]
 pub enum AnimationName {
     IdleLowerBody,
     IdleUpperBody,
@@ -140,6 +140,8 @@ pub fn load_player_animations(
     children: &Query<&Children>,
     names: &Query<&Name>,
     animation_targets: &Query<&AnimationTarget>,
+    commands: Commands,
+    parents: &Query<&Parent>,
 ) -> (
     PlayerAnimations,
     PlayerProceduralAnimationTargets,
@@ -197,8 +199,15 @@ pub fn load_player_animations(
     let sprint_ix = graph.add_clip_with_mask(sprint_clip, PROC_ONLY_MASK, 1.0, full_body);
     let sprint = (AnimationName::Sprint, sprint_ix);
 
-    let proc_targets =
-        init_mixamo_rig_masks(entity, &mut graph, &children, &names, &animation_targets);
+    let proc_targets = init_mixamo_rig_masks(
+        entity,
+        &mut graph,
+        children,
+        names,
+        animation_targets,
+        commands,
+        parents,
+    );
 
     let anims = PlayerAnimations {
         anims: [
@@ -224,6 +233,8 @@ fn init_mixamo_rig_masks(
     children: &Query<&Children>,
     names: &Query<&Name>,
     animation_targets: &Query<&AnimationTarget>,
+    mut commands: Commands,
+    parents: &Query<&Parent>,
 ) -> PlayerProceduralAnimationTargets {
     // (name, should masks decendants, mask type)
     let masks = &[
@@ -261,8 +272,19 @@ fn init_mixamo_rig_masks(
         }
     }
 
+    let spine1_proc_target = commands
+        .spawn((Transform::default(), Visibility::default()))
+        .id();
+
+    let spine1 = find_child_with_name(root, "mixamorig:Spine1", children, names).unwrap();
+    let spine1_parent = parents.get(spine1).unwrap().get();
+    commands
+        .entity(spine1_proc_target)
+        .set_parent(spine1_parent);
+    commands.entity(spine1).set_parent(spine1_proc_target);
+
     PlayerProceduralAnimationTargets {
-        spine1: find_child_with_name(root, "mixamorig:Spine1", children, names).unwrap(),
+        spine1: spine1_proc_target,
         bullet_point: find_child_with_name(root, "BlasterN", children, names).unwrap(),
     }
 }

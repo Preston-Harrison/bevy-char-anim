@@ -8,7 +8,12 @@ use crate::utils::{self, *};
 use crate::Player;
 
 pub fn run_player_animations(
-    mut states: Query<(Entity, &mut PlayerAnimationState, &mut AnimationPlayer, &AnimationGraphHandle)>,
+    mut states: Query<(
+        Entity,
+        &mut PlayerAnimationState,
+        &mut AnimationPlayer,
+        &AnimationGraphHandle,
+    )>,
     parents: Query<&Parent>,
     players: Query<&Player>,
     mut transforms: Query<&mut Transform>,
@@ -94,7 +99,12 @@ impl PlayerAnimationState {
         let Some(ref input) = self.input else {
             return;
         };
-        let is_finished = |anim| player.animation(anim).unwrap().is_finished();
+        let is_finished = |anim| {
+            player
+                .animation(anim)
+                .map(|a| a.is_finished())
+                .unwrap_or(true)
+        };
 
         self.is_sprinting = input.is_sprinting;
         self.lower_body = match self.lower_body {
@@ -133,16 +143,19 @@ impl PlayerAnimationState {
     pub fn update_player(&self, player: &mut AnimationPlayer, graph: &mut AnimationGraph) {
         let rate = 0.9;
         let threshold = 0.01;
+    
+        let mostly_landed = player.animation(self.anims.get(AnimationName::Land)).is_none_or(|a| a.elapsed() > 0.3 || a.is_finished() || a.weight() < 0.2);
+        let not_just_landed = self.lower_body != LowerBodyState::Land || mostly_landed;
 
         // If is sprinting, fade out other anims and just play full body sprint
         // animation.
-        if self.is_sprinting {
+        if self.is_sprinting && not_just_landed {
             let sprint_anim = self.anims.get(AnimationName::Sprint);
             player
                 .play(sprint_anim)
                 .set_speed(AnimationName::Sprint.get_default_speed())
                 .set_repeat(AnimationName::Sprint.get_default_repeat());
-            
+
             let upper_lower_add = graph.get_mut(self.nodes.upper_lower_add).unwrap();
             upper_lower_add.weight = upper_lower_add.weight * rate;
             if upper_lower_add.weight < threshold {
@@ -246,20 +259,26 @@ impl PlayerAnimationState {
         root_local.rotation = Quat::from_axis_angle(Vec3::Y, self.lower_body_y);
 
         let mut spine1_local = transforms.get_mut(self.proc_targets.spine1).unwrap();
+
         let bullet_point_global = global_transforms
             .get(self.proc_targets.bullet_point)
             .unwrap();
         let spine1_global = global_transforms.get(self.proc_targets.spine1).unwrap();
         let root_global = global_transforms.get(root_entity).unwrap();
 
-        rotate_spine_to_x(
-            root_global,
-            bullet_point_global,
-            spine1_global,
-            &mut spine1_local,
-            input.look_x,
-            self.upper_body_y,
-        );
+        if !self.is_sprinting {
+            rotate_spine_to_x(
+                root_global,
+                bullet_point_global,
+                spine1_global,
+                &mut spine1_local,
+                input.look_x,
+                self.upper_body_y,
+                0.01,
+            );
+        } else {
+            spine1_local.rotation = spine1_local.rotation.rotate_towards(Quat::IDENTITY, 0.01);
+        }
     }
 }
 
@@ -318,6 +337,7 @@ fn rotate_spine_to_x(
     spine1_local: &mut Transform,
     target_gun_x_rotation: f32,
     target_gun_y_rotation: f32,
+    max_angle: f32,
 ) {
     if target_gun_x_rotation > FRAC_PI_2 * 0.9 || target_gun_x_rotation < -FRAC_PI_2 * 0.9 {
         warn!("gun x rotation too large");
@@ -339,9 +359,15 @@ fn rotate_spine_to_x(
         spine1_global.rotation().inverse() * global_target,
     );
 
-    spine1_local.rotation = spine1_local.rotation * alignment_rotation;
-    // Slide the spine vertical if possible.
+    let mut target_rotation = spine1_local.rotation * alignment_rotation;
+    target_rotation = target_rotation.rotate_towards(Quat::from_axis_angle(Vec3::Y, 0.0), 0.1);
     spine1_local.rotation = spine1_local
         .rotation
-        .rotate_towards(Quat::from_axis_angle(Vec3::Y, 0.0), 0.1);
+        .rotate_towards(target_rotation, max_angle);
+
+    // spine1_local.rotation = spine1_local.rotation * alignment_rotation;
+    // // Slide the spine vertical if possible.
+    // spine1_local.rotation = spine1_local
+    //     .rotation
+    //     .rotate_towards(Quat::from_axis_angle(Vec3::Y, 0.0), 0.1);
 }
