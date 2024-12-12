@@ -5,13 +5,13 @@ use bevy::{
     utils::HashMap,
 };
 
-use crate::utils::*;
+use crate::{state::run_player_animations, utils::*};
 
 pub struct AnimationPlugin;
 
 impl Plugin for AnimationPlugin {
     fn build(&self, app: &mut App) {
-        app.add_systems(Update, cancel_translation);
+        app.add_systems(Update, run_player_animations);
     }
 }
 
@@ -119,7 +119,6 @@ impl PlayerAnimations {
     }
 }
 
-#[derive(Component)]
 pub struct PlayerProceduralAnimationTargets {
     pub spine1: Entity,
     pub bullet_point: Entity,
@@ -129,9 +128,6 @@ pub fn load_player_animations(
     entity: Entity,
     asset_server: &AssetServer,
     children: &Query<&Children>,
-    parents: &Query<&Parent>,
-    transforms: &Query<&Transform>,
-    commands: Commands,
     names: &Query<&Name>,
     animation_targets: &Query<&AnimationTarget>,
 ) -> (
@@ -180,16 +176,8 @@ pub fn load_player_animations(
     let land_ix = graph.add_clip_with_mask(land_clip, UPPER_BODY_MASK, 1.0, lower_body_blend);
     let land = (AnimationName::Land, land_ix);
 
-    let proc_targets = init_mixamo_rig_masks(
-        entity,
-        &mut graph,
-        &children,
-        &parents,
-        &names,
-        &transforms,
-        &animation_targets,
-        commands,
-    );
+    let proc_targets =
+        init_mixamo_rig_masks(entity, &mut graph, &children, &names, &animation_targets);
 
     let anims = PlayerAnimations {
         anims: [
@@ -214,11 +202,8 @@ fn init_mixamo_rig_masks(
     root: Entity,
     graph: &mut AnimationGraph,
     children: &Query<&Children>,
-    parents: &Query<&Parent>,
     names: &Query<&Name>,
-    transforms: &Query<&Transform>,
     animation_targets: &Query<&AnimationTarget>,
-    mut commands: Commands,
 ) -> PlayerProceduralAnimationTargets {
     // (name, should masks decendants, mask type)
     let masks = &[
@@ -253,52 +238,8 @@ fn init_mixamo_rig_masks(
         }
     }
 
-    let hips = find_child_with_name(root, "mixamorig:Hips", children, names).unwrap();
-    let hip_parent = parents.get(hips).unwrap();
-    let canceller = commands
-        .spawn(TranslationCanceller {
-            offset: transforms.get(hips).unwrap().translation,
-            enabled: false,
-        })
-        .id();
-    commands.entity(hips).set_parent(canceller);
-    commands.entity(canceller).set_parent(hip_parent.get());
-
     PlayerProceduralAnimationTargets {
         spine1: find_child_with_name(root, "mixamorig:Spine1", children, names).unwrap(),
         bullet_point: find_child_with_name(root, "BlasterN", children, names).unwrap(),
-    }
-}
-
-#[derive(Component)]
-#[require(Transform)]
-struct TranslationCanceller {
-    offset: Vec3,
-    enabled: bool,
-}
-
-fn cancel_translation(
-    mut cancellers: Query<
-        (&mut Transform, &Children, &TranslationCanceller),
-        With<TranslationCanceller>,
-    >,
-    transforms: Query<&Transform, Without<TranslationCanceller>>,
-) {
-    for (mut transform, children, canceller) in cancellers.iter_mut() {
-        if !canceller.enabled {
-            continue;
-        };
-        if children.len() > 1 {
-            warn!("cannot cancel translation for more than one child");
-            continue;
-        };
-        let Some(child) = children.get(0) else {
-            continue;
-        };
-        let Ok(child_transform) = transforms.get(*child) else {
-            warn!("child of translation canceller has no transform");
-            continue;
-        };
-        transform.translation = -child_transform.translation + canceller.offset;
     }
 }

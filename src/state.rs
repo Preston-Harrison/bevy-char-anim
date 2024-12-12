@@ -1,12 +1,37 @@
+use std::f32::consts::FRAC_PI_2;
+
 use bevy::animation::ActiveAnimation;
 use bevy::prelude::*;
 
-use crate::anim::{AnimationName, PlayerAnimations};
-use crate::utils::*;
+use crate::anim::{AnimationName, PlayerAnimations, PlayerProceduralAnimationTargets};
+use crate::utils::{self, *};
+use crate::Player;
 
+pub fn run_player_animations(
+    mut states: Query<(Entity, &mut PlayerAnimationState, &mut AnimationPlayer)>,
+    parents: Query<&Parent>,
+    players: Query<&Player>,
+    mut transforms: Query<&mut Transform>,
+    global_transforms: Query<&GlobalTransform>,
+) {
+    for (entity, mut state, mut player) in states.iter_mut() {
+        state.transition(&player);
+        state.update_player(&mut player);
+        let Some((root_entity, _)) = utils::find_upwards(entity, &parents, &players) else {
+            error!("player animation state not attached to child of player");
+            continue;
+        };
+        state.update_transforms(root_entity, &mut transforms, &global_transforms);
+        state.input = None;
+    }
+}
+
+#[derive(Default)]
 pub struct PlayerAnimationInput {
     /// +Y is forward
     pub local_movement_direction: Vec2,
+    pub look_y: f32,
+    pub look_x: f32,
 
     pub just_jumped: bool,
     pub is_grounded: bool,
@@ -16,19 +41,38 @@ pub struct PlayerAnimationInput {
 pub struct PlayerAnimationState {
     anims: PlayerAnimations,
     lower_body: LowerBodyState,
+    input: Option<PlayerAnimationInput>,
+    pub proc_targets: PlayerProceduralAnimationTargets,
+
+    lower_body_y: f32,
+    lower_body_target_y: f32,
+    upper_body_y: f32,
 }
 
 impl PlayerAnimationState {
-    pub fn new(anims: PlayerAnimations) -> Self {
+    pub fn new(anims: PlayerAnimations, proc_targets: PlayerProceduralAnimationTargets) -> Self {
         Self {
             anims,
             lower_body: LowerBodyState::Idle,
+            input: None,
+            proc_targets,
+
+            lower_body_y: 0.0,
+            lower_body_target_y: 0.0,
+            upper_body_y: 0.0,
         }
     }
 }
 
 impl PlayerAnimationState {
-    pub fn transition(&mut self, input: &PlayerAnimationInput, player: &AnimationPlayer) {
+    pub fn set_input(&mut self, input: PlayerAnimationInput) {
+        self.input = Some(input);
+    }
+
+    pub fn transition(&mut self, player: &AnimationPlayer) {
+        let Some(ref input) = self.input else {
+            return;
+        };
         let is_finished = |anim| player.animation(anim).unwrap().is_finished();
 
         self.lower_body = match self.lower_body {
@@ -53,10 +97,8 @@ impl PlayerAnimationState {
             _ if input.just_jumped => {
                 info!("jumped");
                 LowerBodyState::Jump
-            },
-            _ if input.local_movement_direction.length() < 0.1 => {
-                    LowerBodyState::Idle
             }
+            _ if input.local_movement_direction.length() < 0.1 => LowerBodyState::Idle,
             _ => *sample_cardinal(
                 &[
                     LowerBodyState::Forward,
@@ -123,6 +165,52 @@ impl PlayerAnimationState {
                     .get_default_repeat(),
             );
     }
+
+    pub fn update_transforms(
+        &mut self,
+        root_entity: Entity,
+        transforms: &mut Query<&mut Transform>,
+        global_transforms: &Query<&GlobalTransform>,
+    ) {
+        let mut root_local = transforms.get_mut(root_entity).unwrap();
+        let Some(ref input) = self.input else {
+            warn!("missed input");
+            return;
+        };
+
+        if input.local_movement_direction.length() < 0.1 && input.is_grounded {
+            if self.upper_body_y > 45f32.to_radians() {
+                self.lower_body_target_y += 45f32.to_radians();
+            } else if self.upper_body_y < -45f32.to_radians() {
+                self.lower_body_target_y -= 45f32.to_radians();
+            }
+
+            self.lower_body_y = self.lower_body_y.lerp(self.lower_body_target_y, 0.05);
+            self.upper_body_y = input.look_y - self.lower_body_y;
+        } else {
+            self.lower_body_y = self.lower_body_y.lerp(input.look_y, 0.05);
+            self.lower_body_target_y = input.look_y;
+            self.upper_body_y = input.look_y - self.lower_body_y;
+        }
+
+        root_local.rotation = Quat::from_axis_angle(Vec3::Y, self.lower_body_y);
+
+        let mut spine1_local = transforms.get_mut(self.proc_targets.spine1).unwrap();
+        let bullet_point_global = global_transforms
+            .get(self.proc_targets.bullet_point)
+            .unwrap();
+        let spine1_global = global_transforms.get(self.proc_targets.spine1).unwrap();
+        let root_global = global_transforms.get(root_entity).unwrap();
+
+        rotate_spine_to_x(
+            root_global,
+            bullet_point_global,
+            spine1_global,
+            &mut spine1_local,
+            input.look_x,
+            self.upper_body_y,
+        );
+    }
 }
 
 fn fade_out_animations(
@@ -170,4 +258,40 @@ enum LowerBodyState {
     Jump,
     Falling,
     Land,
+}
+
+/// Rotates the spine bone to the target rotation about the player x-axis.
+fn rotate_spine_to_x(
+    player_global: &GlobalTransform,
+    bullet_point_global: &GlobalTransform,
+    spine1_global: &GlobalTransform,
+    spine1_local: &mut Transform,
+    target_gun_x_rotation: f32,
+    target_gun_y_rotation: f32,
+) {
+    if target_gun_x_rotation > FRAC_PI_2 * 0.9 || target_gun_x_rotation < -FRAC_PI_2 * 0.9 {
+        warn!("gun x rotation too large");
+        return;
+    }
+
+    // Compute the target gun rotation in global space.
+    let target_vec = Quat::from_axis_angle(Vec3::Y, target_gun_y_rotation)
+        * Quat::from_axis_angle(Vec3::X, target_gun_x_rotation)
+        * Vec3::Z;
+    let global_target = player_global.rotation() * target_vec;
+
+    // Compute the current forward direction of the bullet_point in global space.
+    let current_bullet_forward = bullet_point_global.rotation() * Vec3::Z;
+
+    // Compute the rotation needed to align the current bullet_point forward to the target direction.
+    let alignment_rotation = Quat::from_rotation_arc(
+        spine1_global.rotation().inverse() * current_bullet_forward,
+        spine1_global.rotation().inverse() * global_target,
+    );
+
+    spine1_local.rotation = spine1_local.rotation * alignment_rotation;
+    // Slide the spine vertical if possible.
+    spine1_local.rotation = spine1_local
+        .rotation
+        .rotate_towards(Quat::from_axis_angle(Vec3::Y, 0.0), 0.1);
 }

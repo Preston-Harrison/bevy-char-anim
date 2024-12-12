@@ -1,6 +1,3 @@
-use std::f32::consts::FRAC_PI_2;
-
-use anim::PlayerProceduralAnimationTargets;
 use bevy::{
     animation::AnimationTarget,
     color::palettes::css::*,
@@ -99,7 +96,6 @@ fn init_player_animations(
     children: Query<&Children>,
     parents: Query<&Parent>,
     names: Query<&Name>,
-    transforms: Query<&Transform>,
     players: Query<&Player>,
     mut animation_graphs: ResMut<Assets<AnimationGraph>>,
     animation_targets: Query<&AnimationTarget>,
@@ -114,9 +110,6 @@ fn init_player_animations(
             entity,
             &asset_server,
             &children,
-            &parents,
-            &transforms,
-            commands.reborrow(),
             &names,
             &animation_targets,
         );
@@ -124,26 +117,16 @@ fn init_player_animations(
         commands
             .entity(entity)
             .insert(AnimationGraphHandle(animation_graphs.add(graph)))
-            .insert(PlayerAnimationState::new(anims))
-            .insert(proc_targets);
+            .insert(PlayerAnimationState::new(anims, proc_targets));
     }
 }
 
 fn transition_player_animations(
     mut look_x_rotation: Local<f32>,
     mut look_y_rotation: Local<f32>,
-    mut lower_body_y: Local<f32>,
-    mut lower_body_target_y: Local<f32>,
-    mut upper_body_y: Local<f32>,
     mut airborne: Local<bool>,
     keys: Res<ButtonInput<KeyCode>>,
-    mut players: Query<(
-        &mut AnimationPlayer,
-        &mut PlayerAnimationState,
-        &PlayerProceduralAnimationTargets,
-    )>,
-    player_roots: Query<Entity, With<Player>>,
-    mut transforms: Query<&mut Transform>,
+    mut players: Query<&mut PlayerAnimationState>,
     global_transforms: Query<&GlobalTransform>,
     mut commands: Commands,
 ) {
@@ -171,49 +154,18 @@ fn transition_player_animations(
         just_jumped: !*airborne && keys.just_pressed(KeyCode::KeyJ),
         is_grounded: !*airborne,
         local_movement_direction,
+        look_y: *look_y_rotation,
+        look_x: *look_x_rotation,
     };
+
     if keys.just_pressed(KeyCode::KeyJ) {
         *airborne = !*airborne;
     }
 
-    let Ok(root_entity) = player_roots.get_single() else {
-        return;
-    };
+    if let Ok(mut state) = players.get_single_mut() {
+        state.set_input(input);
 
-    let mut root_local = transforms.get_mut(root_entity).unwrap();
-    if input.local_movement_direction.length() < 0.1 && input.is_grounded {
-        if *upper_body_y > 45f32.to_radians() {
-            *lower_body_target_y += 45f32.to_radians();
-        } else if *upper_body_y < -45f32.to_radians() {
-            *lower_body_target_y -= 45f32.to_radians();
-        }
-
-        *lower_body_y = lower_body_y.lerp(*lower_body_target_y, 0.05);
-        *upper_body_y = *look_y_rotation - *lower_body_y;
-    } else {
-        *lower_body_y = lower_body_y.lerp(*look_y_rotation, 0.05);
-        *lower_body_target_y = *look_y_rotation;
-        *upper_body_y = *look_y_rotation - *lower_body_y;
-    }
-
-    root_local.rotation = Quat::from_axis_angle(Vec3::Y, *lower_body_y);
-
-    for (mut player, mut state, proc_targets) in players.iter_mut() {
-        state.transition(&input, &player);
-        state.update_player(&mut player);
-        let mut spine1_local = transforms.get_mut(proc_targets.spine1).unwrap();
-        let bullet_point_global = global_transforms.get(proc_targets.bullet_point).unwrap();
-        let spine1_global = global_transforms.get(proc_targets.spine1).unwrap();
-        let root_global = global_transforms.get(root_entity).unwrap();
-        rotate_spine_to_x(
-            root_global,
-            bullet_point_global,
-            spine1_global,
-            &mut spine1_local,
-            *look_x_rotation,
-            *upper_body_y,
-        );
-
+        let bullet_point_global = global_transforms.get(state.proc_targets.bullet_point).unwrap();
         if keys.just_pressed(KeyCode::KeyT) {
             commands.spawn((
                 Tracer {
@@ -227,42 +179,6 @@ fn transition_player_animations(
             ));
         }
     }
-}
-
-/// Rotates the spine bone to the target rotation about the player x-axis.
-fn rotate_spine_to_x(
-    player_global: &GlobalTransform,
-    bullet_point_global: &GlobalTransform,
-    spine1_global: &GlobalTransform,
-    spine1_local: &mut Transform,
-    target_gun_x_rotation: f32,
-    target_gun_y_rotation: f32,
-) {
-    if target_gun_x_rotation > FRAC_PI_2 * 0.9 || target_gun_x_rotation < -FRAC_PI_2 * 0.9 {
-        warn!("gun x rotation too large");
-        return;
-    }
-
-    // Compute the target gun rotation in global space.
-    let target_vec = Quat::from_axis_angle(Vec3::Y, target_gun_y_rotation)
-        * Quat::from_axis_angle(Vec3::X, target_gun_x_rotation)
-        * Vec3::Z;
-    let global_target = player_global.rotation() * target_vec;
-
-    // Compute the current forward direction of the bullet_point in global space.
-    let current_bullet_forward = bullet_point_global.rotation() * Vec3::Z;
-
-    // Compute the rotation needed to align the current bullet_point forward to the target direction.
-    let alignment_rotation = Quat::from_rotation_arc(
-        spine1_global.rotation().inverse() * current_bullet_forward,
-        spine1_global.rotation().inverse() * global_target,
-    );
-
-    spine1_local.rotation = spine1_local.rotation * alignment_rotation;
-    // Slide the spine vertical if possible.
-    spine1_local.rotation = spine1_local
-        .rotation
-        .rotate_towards(Quat::from_axis_angle(Vec3::Y, 0.0), 0.1);
 }
 
 fn draw_xyz_gizmo(mut gizmos: Gizmos) {

@@ -137,11 +137,11 @@ pub fn find_upwards<'a, T: Component>(
     entity: Entity,
     parents: &Query<&Parent>,
     component: &'a Query<&T>,
-) -> Option<&'a T> {
+) -> Option<(Entity, &'a T)> {
     let mut search = entity;
     while let Ok(parent) = parents.get(search) {
         if let Ok(comp) = component.get(parent.get()) {
-            return Some(comp);
+            return Some((parent.get(), comp));
         };
         search = parent.get();
     }
