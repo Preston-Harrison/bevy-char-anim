@@ -8,15 +8,19 @@ use crate::utils::{self, *};
 use crate::Player;
 
 pub fn run_player_animations(
-    mut states: Query<(Entity, &mut PlayerAnimationState, &mut AnimationPlayer)>,
+    mut states: Query<(Entity, &mut PlayerAnimationState, &mut AnimationPlayer, &AnimationGraphHandle)>,
     parents: Query<&Parent>,
     players: Query<&Player>,
     mut transforms: Query<&mut Transform>,
     global_transforms: Query<&GlobalTransform>,
+    mut anim_graphs: ResMut<Assets<AnimationGraph>>,
 ) {
-    for (entity, mut state, mut player) in states.iter_mut() {
+    for (entity, mut state, mut player, graph) in states.iter_mut() {
+        let Some(graph) = anim_graphs.get_mut(graph) else {
+            continue;
+        };
         state.transition(&player);
-        state.update_player(&mut player);
+        state.update_player(&mut player, graph);
         let Some((root_entity, _)) = utils::find_upwards(entity, &parents, &players) else {
             error!("player animation state not attached to child of player");
             continue;
@@ -30,6 +34,7 @@ pub fn run_player_animations(
 pub struct PlayerAnimationInput {
     /// +Y is forward
     pub local_movement_direction: Vec2,
+    pub is_sprinting: bool,
     pub look_y: f32,
     pub look_x: f32,
 
@@ -47,10 +52,24 @@ pub struct PlayerAnimationState {
     lower_body_y: f32,
     lower_body_target_y: f32,
     upper_body_y: f32,
+
+    is_sprinting: bool,
+    nodes: AnimationNodes,
+}
+
+pub struct AnimationNodes {
+    /// The node that adds upper and lower body anims.
+    pub upper_lower_add: AnimationNodeIndex,
+    /// The node that blends between `upper_lower_add` and full body animations.
+    pub full_body: AnimationNodeIndex,
 }
 
 impl PlayerAnimationState {
-    pub fn new(anims: PlayerAnimations, proc_targets: PlayerProceduralAnimationTargets) -> Self {
+    pub fn new(
+        anims: PlayerAnimations,
+        proc_targets: PlayerProceduralAnimationTargets,
+        nodes: AnimationNodes,
+    ) -> Self {
         Self {
             anims,
             lower_body: LowerBodyState::Idle,
@@ -60,6 +79,8 @@ impl PlayerAnimationState {
             lower_body_y: 0.0,
             lower_body_target_y: 0.0,
             upper_body_y: 0.0,
+            is_sprinting: false,
+            nodes,
         }
     }
 }
@@ -75,6 +96,7 @@ impl PlayerAnimationState {
         };
         let is_finished = |anim| player.animation(anim).unwrap().is_finished();
 
+        self.is_sprinting = input.is_sprinting;
         self.lower_body = match self.lower_body {
             LowerBodyState::Land => {
                 if is_finished(self.anims.get(AnimationName::Land)) {
@@ -94,10 +116,7 @@ impl PlayerAnimationState {
                     LowerBodyState::Falling
                 }
             }
-            _ if input.just_jumped => {
-                info!("jumped");
-                LowerBodyState::Jump
-            }
+            _ if input.just_jumped => LowerBodyState::Jump,
             _ if input.local_movement_direction.length() < 0.1 => LowerBodyState::Idle,
             _ => *sample_cardinal(
                 &[
@@ -111,7 +130,40 @@ impl PlayerAnimationState {
         };
     }
 
-    pub fn update_player(&self, player: &mut AnimationPlayer) {
+    pub fn update_player(&self, player: &mut AnimationPlayer, graph: &mut AnimationGraph) {
+        let rate = 0.9;
+        let threshold = 0.01;
+
+        // If is sprinting, fade out other anims and just play full body sprint
+        // animation.
+        if self.is_sprinting {
+            let sprint_anim = self.anims.get(AnimationName::Sprint);
+            player
+                .play(sprint_anim)
+                .set_speed(AnimationName::Sprint.get_default_speed())
+                .set_repeat(AnimationName::Sprint.get_default_repeat());
+            
+            let upper_lower_add = graph.get_mut(self.nodes.upper_lower_add).unwrap();
+            upper_lower_add.weight = upper_lower_add.weight * rate;
+            if upper_lower_add.weight < threshold {
+                upper_lower_add.weight = 0.0;
+            }
+
+            let full_body = graph.get_mut(self.nodes.full_body).unwrap();
+            full_body.weight = (full_body.weight / rate).clamp(threshold, 1.0);
+
+            return;
+        }
+
+        let full_body = graph.get_mut(self.nodes.full_body).unwrap();
+        full_body.weight = full_body.weight * rate;
+        if full_body.weight < threshold {
+            full_body.weight = 0.0;
+        }
+
+        let upper_lower_add = graph.get_mut(self.nodes.upper_lower_add).unwrap();
+        upper_lower_add.weight = (upper_lower_add.weight / rate).clamp(threshold, 1.0);
+
         let target_lower_body_anim = match self.lower_body {
             LowerBodyState::Idle => self.anims.get(AnimationName::IdleLowerBody),
             LowerBodyState::Forward => self.anims.get(AnimationName::Forward),
@@ -133,9 +185,6 @@ impl PlayerAnimationState {
                 }
             })
             .collect();
-
-        let rate = 0.9;
-        let threshold = 0.01;
 
         fade_out_animations(player, animations_to_fade, rate, threshold);
         fade_in_animation(player, target_lower_body_anim, 1.0 / rate, threshold)
@@ -178,7 +227,8 @@ impl PlayerAnimationState {
             return;
         };
 
-        if input.local_movement_direction.length() < 0.1 && input.is_grounded {
+        if input.local_movement_direction.length() < 0.1 && input.is_grounded && !input.is_sprinting
+        {
             if self.upper_body_y > 45f32.to_radians() {
                 self.lower_body_target_y += 45f32.to_radians();
             } else if self.upper_body_y < -45f32.to_radians() {

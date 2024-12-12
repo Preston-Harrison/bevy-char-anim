@@ -209,3 +209,21 @@ pub fn find_child_with_name(
 
     return None;
 }
+
+pub fn most_aligned(v: Vec2) -> IVec2 {
+    if v.length() < 0.1 {
+        IVec2::ZERO
+    } else if v.x.abs() > v.y.abs() {
+        if v.x > 0.0 {
+            IVec2::X
+        } else {
+            IVec2::NEG_X
+        }
+    } else {
+        if v.y > 0.0 {
+            IVec2::Y
+        } else {
+            IVec2::NEG_Y
+        }
+    }
+}

@@ -106,7 +106,7 @@ fn init_player_animations(
             continue;
         };
 
-        let (anims, proc_targets, graph) = anim::load_player_animations(
+        let (anims, proc_targets, graph, nodes) = anim::load_player_animations(
             entity,
             &asset_server,
             &children,
@@ -117,7 +117,7 @@ fn init_player_animations(
         commands
             .entity(entity)
             .insert(AnimationGraphHandle(animation_graphs.add(graph)))
-            .insert(PlayerAnimationState::new(anims, proc_targets));
+            .insert(PlayerAnimationState::new(anims, proc_targets, nodes));
     }
 }
 
@@ -152,6 +152,7 @@ fn transition_player_animations(
 
     let input = PlayerAnimationInput {
         just_jumped: !*airborne && keys.just_pressed(KeyCode::KeyJ),
+        is_sprinting: keys.pressed(KeyCode::ShiftLeft) && utils::most_aligned(local_movement_direction) == IVec2::Y,
         is_grounded: !*airborne,
         local_movement_direction,
         look_y: *look_y_rotation,

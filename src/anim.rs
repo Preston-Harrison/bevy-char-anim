@@ -5,7 +5,10 @@ use bevy::{
     utils::HashMap,
 };
 
-use crate::{state::run_player_animations, utils::*};
+use crate::{
+    state::{run_player_animations, AnimationNodes},
+    utils::*,
+};
 
 pub struct AnimationPlugin;
 
@@ -15,16 +18,19 @@ impl Plugin for AnimationPlugin {
     }
 }
 
+const PROC_ONLY_MASK_GROUP: u32 = 3;
+const PROC_ONLY_MASK: u64 = 1 << PROC_ONLY_MASK_GROUP;
 const LOWER_BODY_MASK_GROUP: u32 = 1;
 const LOWER_BODY_MASK: u64 = 1 << LOWER_BODY_MASK_GROUP;
 const UPPER_BODY_MASK_GROUP: u32 = 2;
 const UPPER_BODY_MASK: u64 = 1 << UPPER_BODY_MASK_GROUP;
 
-const PLAYER_ANIM_INDICES: [&str; 10] = [
+const PLAYER_ANIM_INDICES: [&str; 11] = [
     "FallingIdle",
     "Idle",
     "IdleUpper",
     "JumpDown",
+    "RifleRun",
     "StrafeLeft",
     "StrafeRight",
     "TPose",
@@ -42,6 +48,7 @@ struct PlayerAnimationPaths {
     jump: AssetPath<'static>,
     falling: AssetPath<'static>,
     land: AssetPath<'static>,
+    sprint: AssetPath<'static>,
 }
 
 impl Default for PlayerAnimationPaths {
@@ -64,6 +71,7 @@ impl Default for PlayerAnimationPaths {
             jump: get_anim("FallingIdle"),
             falling: get_anim("FallingIdle"),
             land: get_anim("JumpDown"),
+            sprint: get_anim("RifleRun"),
         }
     }
 }
@@ -79,9 +87,11 @@ pub enum AnimationName {
     Jump,
     Falling,
     Land,
+    Sprint,
 }
 
 impl AnimationName {
+    /// Returns whether this animation affects the lower body of the player.
     pub fn is_lower_body(&self) -> bool {
         match self {
             Self::IdleUpperBody => false,
@@ -134,12 +144,19 @@ pub fn load_player_animations(
     PlayerAnimations,
     PlayerProceduralAnimationTargets,
     AnimationGraph,
+    AnimationNodes,
 ) {
     let player_anims = PlayerAnimationPaths::default();
     let mut graph = AnimationGraph::new();
     let add_node = graph.add_additive_blend(1.0, graph.root);
     let lower_body_blend = graph.add_blend(1.0, add_node);
     let upper_body_blend = graph.add_blend(1.0, add_node);
+    let full_body = graph.add_blend(1.0, graph.root);
+
+    let nodes = AnimationNodes {
+        upper_lower_add: add_node,
+        full_body,
+    };
 
     let forward_clip = asset_server.load(player_anims.forward.clone());
     let forward_ix = graph.add_clip_with_mask(forward_clip, UPPER_BODY_MASK, 1.0, lower_body_blend);
@@ -176,18 +193,22 @@ pub fn load_player_animations(
     let land_ix = graph.add_clip_with_mask(land_clip, UPPER_BODY_MASK, 1.0, lower_body_blend);
     let land = (AnimationName::Land, land_ix);
 
+    let sprint_clip = asset_server.load(player_anims.sprint.clone());
+    let sprint_ix = graph.add_clip_with_mask(sprint_clip, PROC_ONLY_MASK, 1.0, full_body);
+    let sprint = (AnimationName::Sprint, sprint_ix);
+
     let proc_targets =
         init_mixamo_rig_masks(entity, &mut graph, &children, &names, &animation_targets);
 
     let anims = PlayerAnimations {
         anims: [
-            forward, back, idle_upper, idle_lower, left, right, jump, falling, land,
+            forward, back, idle_upper, idle_lower, left, right, jump, falling, land, sprint,
         ]
         .into_iter()
         .collect(),
     };
 
-    (anims, proc_targets, graph)
+    (anims, proc_targets, graph, nodes)
 }
 
 #[derive(PartialEq)]
@@ -197,7 +218,6 @@ enum Mask {
     Both,
 }
 
-/// groups. The param `entity` should be the entity with an AnimationPlayer.
 fn init_mixamo_rig_masks(
     root: Entity,
     graph: &mut AnimationGraph,
@@ -234,6 +254,9 @@ fn init_mixamo_rig_masks(
             }
             if *mask_type == Mask::Upper || *mask_type == Mask::Both {
                 graph.add_target_to_mask_group(target.id, UPPER_BODY_MASK_GROUP);
+            }
+            if *mask_type == Mask::Both {
+                graph.add_target_to_mask_group(target.id, PROC_ONLY_MASK_GROUP);
             }
         }
     }
