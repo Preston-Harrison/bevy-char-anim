@@ -12,6 +12,7 @@ mod anim;
 mod state;
 mod tracer;
 mod utils;
+mod mutant;
 
 fn main() {
     App::new()
@@ -19,6 +20,7 @@ fn main() {
         .add_plugins(utils::freecam::FreeCameraPlugin)
         .add_plugins(tracer::TracerPlugin)
         .add_plugins(anim::AnimationPlugin)
+        .add_plugins(mutant::MutantPlugin)
         .add_systems(Startup, setup)
         .add_systems(
             Update,
