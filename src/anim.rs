@@ -1,5 +1,5 @@
 use bevy::{
-    animation::{AnimationTarget, RepeatAnimation},
+    animation::{ActiveAnimation, AnimationTarget, RepeatAnimation},
     asset::AssetPath,
     prelude::*,
     utils::HashMap,
@@ -18,26 +18,12 @@ impl Plugin for AnimationPlugin {
     }
 }
 
-const PROC_ONLY_MASK_GROUP: u32 = 3;
-const PROC_ONLY_MASK: u64 = 1 << PROC_ONLY_MASK_GROUP;
+/// Masks out bones in the lower body.
 const LOWER_BODY_MASK_GROUP: u32 = 1;
 const LOWER_BODY_MASK: u64 = 1 << LOWER_BODY_MASK_GROUP;
+/// Masks out bones in the upper body.
 const UPPER_BODY_MASK_GROUP: u32 = 2;
 const UPPER_BODY_MASK: u64 = 1 << UPPER_BODY_MASK_GROUP;
-
-const PLAYER_ANIM_INDICES: [&str; 11] = [
-    "FallingIdle",
-    "Idle",
-    "IdleUpper",
-    "JumpDown",
-    "RifleRun",
-    "StrafeLeft",
-    "StrafeRight",
-    "TPose",
-    "TurnLeft45",
-    "WalkBackward",
-    "WalkForward",
-];
 
 struct PlayerAnimationPaths {
     forward: AssetPath<'static>,
@@ -53,6 +39,21 @@ struct PlayerAnimationPaths {
 
 impl Default for PlayerAnimationPaths {
     fn default() -> Self {
+        /// Animation indices in order according to character gltf file.
+        const PLAYER_ANIM_INDICES: [&str; 11] = [
+            "FallingIdle",
+            "Idle",
+            "IdleUpper",
+            "JumpDown",
+            "RifleRun",
+            "StrafeLeft",
+            "StrafeRight",
+            "TPose",
+            "TurnLeft45",
+            "WalkBackward",
+            "WalkForward",
+        ];
+
         let get_anim = |name| {
             for (i, curr) in PLAYER_ANIM_INDICES.iter().enumerate() {
                 if name == *curr {
@@ -127,6 +128,16 @@ impl PlayerAnimations {
             .map(|(name, _)| *name)
             .unwrap()
     }
+
+    pub fn apply_defaults<'a>(
+        &self,
+        index: AnimationNodeIndex,
+        anim: &'a mut ActiveAnimation,
+    ) -> &'a mut ActiveAnimation {
+        let name = self.get_name(index);
+        anim.set_speed(name.get_default_speed())
+            .set_repeat(name.get_default_repeat())
+    }
 }
 
 pub struct PlayerProceduralAnimationTargets {
@@ -160,44 +171,77 @@ pub fn load_player_animations(
         full_body,
     };
 
-    let forward_clip = asset_server.load(player_anims.forward.clone());
-    let forward_ix = graph.add_clip_with_mask(forward_clip, UPPER_BODY_MASK, 1.0, lower_body_blend);
-    let forward = (AnimationName::Forward, forward_ix);
+    let mut anims = HashMap::default();
 
-    let back_clip = asset_server.load(player_anims.back.clone());
-    let back_ix = graph.add_clip_with_mask(back_clip, UPPER_BODY_MASK, 1.0, lower_body_blend);
-    let back = (AnimationName::Back, back_ix);
+    let mut add_anim = |name, path: &AssetPath<'static>, mask, parent| {
+        let forward_clip = asset_server.load(path.clone());
+        let forward_ix = graph.add_clip_with_mask(forward_clip, mask, 1.0, parent);
+        anims.insert(name, forward_ix);
+    };
 
-    let idle_clip = asset_server.load(player_anims.idle.clone());
-    let idle_upper_ix =
-        graph.add_clip_with_mask(idle_clip.clone(), LOWER_BODY_MASK, 1.0, upper_body_blend);
-    let idle_lower_ix = graph.add_clip_with_mask(idle_clip, UPPER_BODY_MASK, 1.0, lower_body_blend);
-    let idle_upper = (AnimationName::IdleUpperBody, idle_upper_ix);
-    let idle_lower = (AnimationName::IdleLowerBody, idle_lower_ix);
+    add_anim(
+        AnimationName::Forward,
+        &player_anims.forward,
+        UPPER_BODY_MASK,
+        lower_body_blend,
+    );
+    add_anim(
+        AnimationName::Back,
+        &player_anims.back,
+        UPPER_BODY_MASK,
+        lower_body_blend,
+    );
+    add_anim(
+        AnimationName::IdleUpperBody,
+        &player_anims.idle,
+        LOWER_BODY_MASK,
+        upper_body_blend,
+    );
+    add_anim(
+        AnimationName::IdleLowerBody,
+        &player_anims.idle,
+        UPPER_BODY_MASK,
+        lower_body_blend,
+    );
+    add_anim(
+        AnimationName::Left,
+        &player_anims.left,
+        UPPER_BODY_MASK,
+        lower_body_blend,
+    );
+    add_anim(
+        AnimationName::Right,
+        &player_anims.right,
+        UPPER_BODY_MASK,
+        lower_body_blend,
+    );
+    add_anim(
+        AnimationName::Jump,
+        &player_anims.jump,
+        UPPER_BODY_MASK,
+        lower_body_blend,
+    );
+    add_anim(
+        AnimationName::Falling,
+        &player_anims.falling,
+        UPPER_BODY_MASK,
+        lower_body_blend,
+    );
+    add_anim(
+        AnimationName::Land,
+        &player_anims.land,
+        UPPER_BODY_MASK,
+        lower_body_blend,
+    );
+    add_anim(
+        AnimationName::Sprint,
+        &player_anims.sprint,
+        // No mask, notably this affects procedural bones as well.
+        0,
+        full_body,
+    );
 
-    let left_clip = asset_server.load(player_anims.left.clone());
-    let left_ix = graph.add_clip_with_mask(left_clip, UPPER_BODY_MASK, 1.0, lower_body_blend);
-    let left = (AnimationName::Left, left_ix);
-
-    let right_clip = asset_server.load(player_anims.right.clone());
-    let right_ix = graph.add_clip_with_mask(right_clip, UPPER_BODY_MASK, 1.0, lower_body_blend);
-    let right = (AnimationName::Right, right_ix);
-
-    let jump_clip = asset_server.load(player_anims.jump.clone());
-    let jump_ix = graph.add_clip_with_mask(jump_clip, UPPER_BODY_MASK, 1.0, lower_body_blend);
-    let jump = (AnimationName::Jump, jump_ix);
-
-    let falling_clip = asset_server.load(player_anims.falling.clone());
-    let falling_ix = graph.add_clip_with_mask(falling_clip, UPPER_BODY_MASK, 1.0, lower_body_blend);
-    let falling = (AnimationName::Falling, falling_ix);
-
-    let land_clip = asset_server.load(player_anims.land.clone());
-    let land_ix = graph.add_clip_with_mask(land_clip, UPPER_BODY_MASK, 1.0, lower_body_blend);
-    let land = (AnimationName::Land, land_ix);
-
-    let sprint_clip = asset_server.load(player_anims.sprint.clone());
-    let sprint_ix = graph.add_clip_with_mask(sprint_clip, PROC_ONLY_MASK, 1.0, full_body);
-    let sprint = (AnimationName::Sprint, sprint_ix);
+    let anims = PlayerAnimations { anims };
 
     let proc_targets = init_mixamo_rig_masks(
         entity,
@@ -208,14 +252,6 @@ pub fn load_player_animations(
         commands,
         parents,
     );
-
-    let anims = PlayerAnimations {
-        anims: [
-            forward, back, idle_upper, idle_lower, left, right, jump, falling, land, sprint,
-        ]
-        .into_iter()
-        .collect(),
-    };
 
     (anims, proc_targets, graph, nodes)
 }
@@ -260,14 +296,15 @@ fn init_mixamo_rig_masks(
             vec![*target]
         };
         for target in targets {
-            if *mask_type == Mask::Lower || *mask_type == Mask::Both {
+            if *mask_type == Mask::Lower {
                 graph.add_target_to_mask_group(target.id, LOWER_BODY_MASK_GROUP);
             }
-            if *mask_type == Mask::Upper || *mask_type == Mask::Both {
+            if *mask_type == Mask::Upper {
                 graph.add_target_to_mask_group(target.id, UPPER_BODY_MASK_GROUP);
             }
             if *mask_type == Mask::Both {
-                graph.add_target_to_mask_group(target.id, PROC_ONLY_MASK_GROUP);
+                graph.add_target_to_mask_group(target.id, LOWER_BODY_MASK_GROUP);
+                graph.add_target_to_mask_group(target.id, UPPER_BODY_MASK_GROUP);
             }
         }
     }

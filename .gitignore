@@ -1,3 +1,4 @@
 /target
-/assets
+assets/**/*
+!assets/models/gltf/character.glb
 .DS_Store
