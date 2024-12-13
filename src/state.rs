@@ -30,7 +30,7 @@ pub fn run_player_animations(
             error!("player animation state not attached to child of player");
             continue;
         };
-        state.update_transforms(root_entity, &mut transforms, &global_transforms);
+        state.update_transforms(root_entity, &mut transforms, &global_transforms, &player);
         state.input = None;
     }
 }
@@ -143,13 +143,20 @@ impl PlayerAnimationState {
     pub fn update_player(&self, player: &mut AnimationPlayer, graph: &mut AnimationGraph) {
         let rate = 0.9;
         let threshold = 0.01;
-    
-        let mostly_landed = player.animation(self.anims.get(AnimationName::Land)).is_none_or(|a| a.elapsed() > 0.3 || a.is_finished() || a.weight() < 0.2);
+
+        let mostly_landed = player
+            .animation(self.anims.get(AnimationName::Land))
+            .is_none_or(|a| a.elapsed() > 0.25 || a.is_finished());
+
+        let not_played_land_anim_yet = self.lower_body == LowerBodyState::Land
+            && player
+                .animation(self.anims.get(AnimationName::Land))
+                .is_none();
         let not_just_landed = self.lower_body != LowerBodyState::Land || mostly_landed;
 
         // If is sprinting, fade out other anims and just play full body sprint
         // animation.
-        if self.is_sprinting && not_just_landed {
+        if self.is_sprinting && not_just_landed && !not_played_land_anim_yet {
             let sprint_anim = self.anims.get(AnimationName::Sprint);
             player
                 .play(sprint_anim)
@@ -233,6 +240,7 @@ impl PlayerAnimationState {
         root_entity: Entity,
         transforms: &mut Query<&mut Transform>,
         global_transforms: &Query<&GlobalTransform>,
+        player: &AnimationPlayer,
     ) {
         let mut root_local = transforms.get_mut(root_entity).unwrap();
         let Some(ref input) = self.input else {
@@ -258,15 +266,20 @@ impl PlayerAnimationState {
 
         root_local.rotation = Quat::from_axis_angle(Vec3::Y, self.lower_body_y);
 
-        let mut spine1_local = transforms.get_mut(self.proc_targets.spine1).unwrap();
-
         let bullet_point_global = global_transforms
             .get(self.proc_targets.bullet_point)
             .unwrap();
         let spine1_global = global_transforms.get(self.proc_targets.spine1).unwrap();
+        let mut spine1_local = transforms.get_mut(self.proc_targets.spine1).unwrap();
         let root_global = global_transforms.get(root_entity).unwrap();
 
         if !self.is_sprinting {
+            let max_angle = match player.animation(self.anims.get(AnimationName::Sprint)) {
+                Some(a) if a.weight() < 0.25 => 0.05,
+                Some(_) => 0.0,
+                None => 0.1,
+            };
+
             rotate_spine_to_x(
                 root_global,
                 bullet_point_global,
@@ -274,7 +287,7 @@ impl PlayerAnimationState {
                 &mut spine1_local,
                 input.look_x,
                 self.upper_body_y,
-                0.01,
+                max_angle,
             );
         } else {
             spine1_local.rotation = spine1_local.rotation.rotate_towards(Quat::IDENTITY, 0.01);
@@ -335,13 +348,13 @@ fn rotate_spine_to_x(
     bullet_point_global: &GlobalTransform,
     spine1_global: &GlobalTransform,
     spine1_local: &mut Transform,
-    target_gun_x_rotation: f32,
+    mut target_gun_x_rotation: f32,
     target_gun_y_rotation: f32,
     max_angle: f32,
 ) {
     if target_gun_x_rotation > FRAC_PI_2 * 0.9 || target_gun_x_rotation < -FRAC_PI_2 * 0.9 {
         warn!("gun x rotation too large");
-        return;
+        target_gun_x_rotation = target_gun_x_rotation.clamp(-FRAC_PI_2, FRAC_PI_2 * 0.9);
     }
 
     // Compute the target gun rotation in global space.
