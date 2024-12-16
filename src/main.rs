@@ -1,3 +1,5 @@
+use std::env;
+
 use bevy::{
     animation::AnimationTarget,
     color::palettes::css::*,
@@ -13,8 +15,13 @@ mod state;
 mod tracer;
 mod utils;
 mod mutant;
+mod navmesh;
 
 fn main() {
+    if env::args().any(|v| v == "navmesh") {
+        navmesh::run();
+        return;
+    }
     App::new()
         .add_plugins(DefaultPlugins)
         .add_plugins(utils::freecam::FreeCameraPlugin)

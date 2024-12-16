@@ -3,3 +3,5 @@ assets/**/*
 !assets/models/gltf/character.glb
 !assets/shaders/*
 .DS_Store
+*.blend
+*.blend1
