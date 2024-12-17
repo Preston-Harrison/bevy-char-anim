@@ -7,7 +7,7 @@ edition = "2021"
 bevy = { version = "0.15.0" }
 bevy-inspector-egui = { version = "0.28.0" }
 bevy_hanabi = { version = "0.14" }
-avian3d = { git = "https://github.com/Jondolf/avian.git", ref = "main" }
+bevy_rapier3d = "0.28.0"
 
 [profile.dev]
 opt-level = 1

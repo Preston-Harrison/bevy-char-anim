@@ -16,6 +16,7 @@ mod tracer;
 mod utils;
 mod mutant;
 mod navmesh;
+mod enemy;
 
 fn main() {
     if env::args().any(|v| v == "navmesh") {
