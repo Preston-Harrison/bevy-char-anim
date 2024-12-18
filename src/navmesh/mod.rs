@@ -1,6 +1,7 @@
 use astar::astar;
 use bevy::{color::palettes::css::*, prelude::*, utils::HashSet};
 use bevy_rapier3d::prelude::*;
+use navmesh::{setup_navmesh, NavMesh, NavMeshConstructor};
 
 use crate::{
     enemy::{Enemy, EnemyPath, EnemyPlugin, EnemyState},
@@ -9,6 +10,7 @@ use crate::{
 
 mod astar;
 mod navgrid;
+mod navmesh;
 
 pub fn run() {
     App::new()
@@ -22,6 +24,7 @@ pub fn run() {
             Update,
             (
                 setup_navmesh,
+                setup_navgrid,
                 utils::toggle_cursor_grab_with_esc,
                 draw_path_nodes,
             ),
@@ -81,11 +84,11 @@ fn setup(mut commands: Commands, asset_server: Res<AssetServer>) {
 
     commands.spawn((
         SceneRoot(asset_server.load("terrain.glb#Scene0")),
-        NavGridConstructor,
+        NavMeshConstructor,
     ));
 }
 
-fn setup_navmesh(
+fn setup_navgrid(
     mut commands: Commands,
     mut tracker: Local<HashSet<Entity>>,
     meshes: Query<(Entity, &Mesh3d, &GlobalTransform)>,
@@ -123,7 +126,7 @@ fn draw_path_nodes(
     mut commands: Commands,
     rapier: ReadDefaultRapierContext,
     mut gizmos: Gizmos,
-    query: Query<&NavGrid>,
+    query: Query<&NavMesh>,
     camera: Query<&GlobalTransform, With<Camera>>,
     mouse: Res<ButtonInput<MouseButton>>,
     mut enemies: Query<(&GlobalTransform, &mut Enemy)>,
@@ -136,7 +139,7 @@ fn draw_path_nodes(
     };
 
     let enemy = enemy.get_or_insert_with(|| {
-        commands.spawn(Enemy::new(Vec3::Y * 10.0)).id()
+        commands.spawn(Enemy::new(Vec3::Y * 1.0)).id()
     });
 
     let ray_origin = cam_t.translation();
@@ -162,7 +165,7 @@ fn draw_path_nodes(
         *path = match *end {
             Some(end) => {
                 let (transform, mut enemy) = enemies.get_mut(*enemy).unwrap();
-                let path = grid.get_path(transform.translation(), end);
+                let path = grid.find_path(transform.translation(), end);
                 if let Some(ref p) = path {
                     enemy.state = EnemyState::Moving(EnemyPath {
                         path: p.clone(),
@@ -176,17 +179,17 @@ fn draw_path_nodes(
         };
     }
 
-    for (ix, point) in grid.points.iter().enumerate() {
-        let isometry = Isometry3d::new(*point, Quat::IDENTITY);
-        let color = if selected.is_some_and(|v| v.distance(grid.points[ix]) < 0.1) {
-            ORANGE
-        } else if end.is_some_and(|v| v.distance(grid.points[ix]) < 0.1) {
-            GREEN
-        } else {
-            BLACK
-        };
-        gizmos.sphere(isometry, 0.1, color);
-    }
+    // for (ix, point) in grid.points.iter().enumerate() {
+    //     let isometry = Isometry3d::new(*point, Quat::IDENTITY);
+    //     let color = if selected.is_some_and(|v| v.distance(grid.points[ix]) < 0.1) {
+    //         ORANGE
+    //     } else if end.is_some_and(|v| v.distance(grid.points[ix]) < 0.1) {
+    //         GREEN
+    //     } else {
+    //         BLACK
+    //     };
+    //     gizmos.sphere(isometry, 0.1, color);
+    // }
 
     if let Some(ref path) = *path {
         for segment in path.windows(2) {

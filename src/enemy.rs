@@ -78,7 +78,6 @@ fn enemy_update(
                     .translation
                     .get_or_insert(Vec3::ZERO)
                     .add_assign(direction * step);
-				dbg!(controller.translation);
 
                 // Check if target is reached
                 if current_position.distance(target_position) < 1.0 {
