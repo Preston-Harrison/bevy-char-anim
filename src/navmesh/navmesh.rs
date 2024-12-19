@@ -1,7 +1,6 @@
 use bevy::render::mesh::{Indices, Mesh, VertexAttributeValues};
 use bevy::{prelude::*, utils::HashSet};
 use bevy_rapier3d::prelude::*;
-use std::collections::HashMap;
 
 use crate::utils;
 
@@ -46,7 +45,6 @@ pub struct NavMesh {
     pub triangles: Vec<[usize; 3]>,
     pub vertex_positions: Vec<Vec3>,
     pub adjacency: Vec<Vec<usize>>,
-    pub outside_edges: Vec<[usize; 2]>,
 }
 
 impl NavMesh {
@@ -56,13 +54,11 @@ impl NavMesh {
         let (mut vertex_positions, mut triangles) = extract_mesh_data(mesh, transform);
         merge::merge_vertices_by_distance(&mut vertex_positions, &mut triangles, 0.1);
         let adjacency = build_adjacency(&triangles, vertex_positions.len());
-        let outside_edges = compute_outside_edges(&triangles);
 
         NavMesh {
             triangles,
             vertex_positions,
             adjacency,
-            outside_edges,
         }
     }
 
@@ -152,27 +148,6 @@ fn point_in_triangle(p: Vec3, a: Vec3, b: Vec3, c: Vec3) -> bool {
 
     // Check if point is inside the triangle
     (u >= 0.0) && (v >= 0.0) && (u + v <= 1.0)
-}
-
-fn compute_outside_edges(triangles: &[[usize; 3]]) -> Vec<[usize; 2]> {
-    let mut edge_count: HashMap<(usize, usize), usize> = HashMap::new();
-
-    // Helper function to ensure edges have consistent ordering
-    let normalize_edge = |a: usize, b: usize| if a < b { (a, b) } else { (b, a) };
-
-    // Count the occurrences of each edge
-    for triangle in triangles {
-        for i in 0..3 {
-            let edge = normalize_edge(triangle[i], triangle[(i + 1) % 3]);
-            *edge_count.entry(edge).or_insert(0) += 1;
-        }
-    }
-
-    // Collect edges that appear only once (boundary edges)
-    edge_count
-        .into_iter()
-        .map(|(edge, _)| [edge.0, edge.1])
-        .collect()
 }
 
 fn extract_mesh_data(mesh: &Mesh, transform: &GlobalTransform) -> (Vec<Vec3>, Vec<[usize; 3]>) {
