@@ -21,7 +21,7 @@ impl Enemy {
 		let controller = KinematicCharacterController::default();
 
         (
-            Collider::ball(0.5),
+            Collider::ball(0.1),
             Enemy {
                 state: EnemyState::Idle,
             },
