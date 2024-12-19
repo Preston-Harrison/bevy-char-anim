@@ -1,16 +1,15 @@
-use astar::astar;
-use bevy::{color::palettes::css::*, prelude::*, utils::HashSet};
+use bevy::{color::palettes::css::*, prelude::*};
 use bevy_rapier3d::prelude::*;
-use navmesh::{setup_navmesh, NavMesh, NavMeshConstructor};
+use nav::{setup_navmesh, NavMesh, NavMeshConstructor};
 
 use crate::{
     enemy::{Enemy, EnemyPath, EnemyPlugin, EnemyState},
     utils::{self, freecam::FreeCamera},
 };
 
+mod nav;
+mod merge;
 mod astar;
-mod navgrid;
-mod navmesh;
 
 pub fn run() {
     App::new()
@@ -24,44 +23,11 @@ pub fn run() {
             Update,
             (
                 setup_navmesh,
-                setup_navgrid,
                 utils::toggle_cursor_grab_with_esc,
                 draw_path_nodes,
             ),
         )
         .run();
-}
-
-#[derive(Component)]
-struct NavGridConstructor;
-
-#[derive(Component)]
-struct NavGrid {
-    points: Vec<Vec3>,
-    adjacency: Vec<Vec<usize>>,
-}
-
-impl NavGrid {
-    pub fn get_closest_point(&self, point: Vec3) -> Option<usize> {
-        let mut min_dist = f32::INFINITY;
-        let mut closest = None;
-        for (i, p) in self.points.iter().enumerate() {
-            let dist = point.distance(*p);
-            if dist < min_dist {
-                min_dist = dist;
-                closest = Some(i);
-            }
-        }
-        closest
-    }
-
-    pub fn get_path(&self, start: Vec3, end: Vec3) -> Option<Vec<Vec3>> {
-        let start = self.get_closest_point(start)?;
-        let end = self.get_closest_point(end)?;
-        let path = astar(&self.points, &self.adjacency, start, end)?;
-        let path_of_points: Vec<Vec3> = path.into_iter().map(|ix| self.points[ix]).collect();
-        Some(path_of_points)
-    }
 }
 
 fn setup(mut commands: Commands, asset_server: Res<AssetServer>) {
@@ -86,37 +52,6 @@ fn setup(mut commands: Commands, asset_server: Res<AssetServer>) {
         SceneRoot(asset_server.load("terrain.glb#Scene0")),
         NavMeshConstructor,
     ));
-}
-
-fn setup_navgrid(
-    mut commands: Commands,
-    mut tracker: Local<HashSet<Entity>>,
-    meshes: Query<(Entity, &Mesh3d, &GlobalTransform)>,
-    mesh_res: Res<Assets<Mesh>>,
-    parents: Query<&Parent>,
-    navmesh: Query<&NavGridConstructor>,
-) {
-    for (entity, handle, transform) in meshes.iter() {
-        if tracker.contains(&entity) {
-            continue;
-        }
-        let Some((navgrid, _)) = utils::find_upwards(entity, &parents, &navmesh) else {
-            continue;
-        };
-
-        let Some(mesh) = mesh_res.get(&handle.0) else {
-            continue;
-        };
-        tracker.insert(entity);
-        let (points, adjacency) = navgrid::generate_nav_points(mesh, transform, 1.0, 1.9);
-        commands
-            .entity(navgrid)
-            .insert(NavGrid { points, adjacency })
-            .remove::<NavGridConstructor>();
-        commands
-            .entity(entity)
-            .insert(Collider::from_bevy_mesh(mesh, &ComputedColliderShape::default()).unwrap());
-    }
 }
 
 fn draw_path_nodes(

@@ -1,101 +1,97 @@
-use bevy::prelude::Vec3;
-use std::cmp::Ordering;
-use std::collections::{BinaryHeap, HashSet};
+use std::{cmp::Ordering, collections::BinaryHeap};
 
+use bevy::{prelude::*, utils::HashMap};
+
+/// Node struct to hold A* frontier data
 #[derive(Copy, Clone, PartialEq)]
-struct NodeCost {
-    node: usize,
-    f_score: f32,
+struct Node {
+    cost: f32,
+    index: usize,
 }
 
-// Implement ordering so that BinaryHeap can sort NodeCost by f_score (lowest first)
-impl Eq for NodeCost {}
-
-impl Ord for NodeCost {
+/// Implement ordering for the BinaryHeap to prioritize nodes with lower cost
+impl Ord for Node {
     fn cmp(&self, other: &Self) -> Ordering {
-        // We want a min-heap based on f_score, so invert comparison
-        self.f_score
-            .partial_cmp(&other.f_score)
+        other
+            .cost
+            .partial_cmp(&self.cost)
             .unwrap_or(Ordering::Equal)
-            .reverse()
     }
 }
 
-impl PartialOrd for NodeCost {
+impl Eq for Node {}
+
+impl PartialOrd for Node {
     fn partial_cmp(&self, other: &Self) -> Option<Ordering> {
         Some(self.cmp(other))
     }
 }
 
-/// Compute Euclidean distance between two points
-fn heuristic(a: Vec3, b: Vec3) -> f32 {
-    a.distance(b)
-}
-
-/// A* pathfinding
+/// Run A* on the polygon graph. Returns the vertex path from start to goal,
+/// where start and goal are indices into the vertex array. Vertex connections
+/// is a list of connected vertices per vertex. Vertex world space contains
+/// the world coordinates per vertex.
 ///
-/// Given:
-/// - points: A list of positions (Vec3) for each node index.
-/// - adjacency: A list of adjacency lists, where adjacency[i] is the list of neighbors of node i.
-/// - start: Index of the start node
-/// - goal: Index of the goal node
-///
-/// Returns:
-/// An Option containing the path as a sequence of node indices, or None if no path is found.
-pub fn astar(
-    points: &Vec<Vec3>,
-    adjacency: &Vec<Vec<usize>>,
+/// Heuristic: Euclidean distance between vertices.
+pub fn vertex_astar(
+    vertex_connections: &[Vec<usize>],
+    vertex_world_space: &[Vec3],
     start: usize,
     goal: usize,
 ) -> Option<Vec<usize>> {
-    let n = points.len();
-    let mut came_from = vec![None; n];
-    let mut g_score = vec![f32::INFINITY; n];
-    let mut f_score = vec![f32::INFINITY; n];
-
-    g_score[start] = 0.0;
-    f_score[start] = heuristic(points[start], points[goal]);
-
     let mut open_set = BinaryHeap::new();
-    open_set.push(NodeCost {
-        node: start,
-        f_score: f_score[start],
-    });
-    let mut in_open_set = HashSet::new();
-    in_open_set.insert(start);
+    let mut came_from: HashMap<usize, usize> = HashMap::new();
+    let mut g_score: HashMap<usize, f32> = HashMap::new();
+    let mut f_score: HashMap<usize, f32> = HashMap::new();
 
-    while let Some(NodeCost { node: current, .. }) = open_set.pop() {
+    open_set.push(Node {
+        index: start,
+        cost: 0.0,
+    });
+    g_score.insert(start, 0.0);
+    f_score.insert(
+        start,
+        heuristic(vertex_world_space[start], vertex_world_space[goal]),
+    );
+
+    while let Some(Node { index: current, .. }) = open_set.pop() {
         if current == goal {
-            // Reconstruct path
-            let mut path = Vec::new();
-            let mut cur = current;
-            while let Some(prev) = came_from[cur] {
-                path.push(cur);
-                cur = prev;
-            }
-            path.push(start);
-            path.reverse();
-            return Some(path);
+            return Some(reconstruct_path(&came_from, current));
         }
 
-        in_open_set.remove(&current);
+        for &neighbor in &vertex_connections[current] {
+            let tentative_g_score = g_score.get(&current).unwrap_or(&f32::INFINITY)
+                + vertex_world_space[current].distance(vertex_world_space[neighbor]);
 
-        for &neighbor in &adjacency[current] {
-            let tentative_g = g_score[current] + heuristic(points[current], points[neighbor]);
-            if tentative_g < g_score[neighbor] {
-                came_from[neighbor] = Some(current);
-                g_score[neighbor] = tentative_g;
-                f_score[neighbor] = tentative_g + heuristic(points[neighbor], points[goal]);
-                if !in_open_set.contains(&neighbor) {
-                    open_set.push(NodeCost {
-                        node: neighbor,
-                        f_score: f_score[neighbor],
-                    });
-                    in_open_set.insert(neighbor);
-                }
+            if tentative_g_score < *g_score.get(&neighbor).unwrap_or(&f32::INFINITY) {
+                came_from.insert(neighbor, current);
+                g_score.insert(neighbor, tentative_g_score);
+                let f_score_value = tentative_g_score
+                    + heuristic(vertex_world_space[neighbor], vertex_world_space[goal]);
+                f_score.insert(neighbor, f_score_value);
+                open_set.push(Node {
+                    index: neighbor,
+                    cost: f_score_value,
+                });
             }
         }
     }
 
     None
+}
+
+/// Heuristic: Euclidean distance between two points
+fn heuristic(a: Vec3, b: Vec3) -> f32 {
+    a.distance(b)
+}
+
+/// Reconstruct the path by backtracking through the `came_from` map
+fn reconstruct_path(came_from: &HashMap<usize, usize>, mut current: usize) -> Vec<usize> {
+    let mut path = vec![current];
+    while let Some(&parent) = came_from.get(&current) {
+        current = parent;
+        path.push(current);
+    }
+    path.reverse();
+    path
 }

@@ -3,9 +3,7 @@ use bevy::{prelude::*, utils::HashSet};
 use bevy_rapier3d::prelude::*;
 
 use crate::utils;
-
-mod astar;
-mod merge;
+use super::{astar, merge};
 
 #[derive(Component)]
 pub struct NavMeshConstructor;
