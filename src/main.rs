@@ -17,10 +17,15 @@ mod utils;
 mod mutant;
 mod navmesh;
 mod enemy;
+mod dungeon;
+mod algo;
 
 fn main() {
     if env::args().any(|v| v == "navmesh") {
         navmesh::run();
+        return;
+    } else if env::args().any(|v| v == "dungeon") {
+        dungeon::run();
         return;
     }
     App::new()

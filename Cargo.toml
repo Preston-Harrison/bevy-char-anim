@@ -8,6 +8,7 @@ bevy = { version = "0.15.0" }
 bevy-inspector-egui = { version = "0.28.0" }
 bevy_hanabi = { version = "0.14" }
 bevy_rapier3d = "0.28.0"
+rand = "0.8.5"
 
 [profile.dev]
 opt-level = 1
