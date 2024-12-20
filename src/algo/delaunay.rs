@@ -2,8 +2,8 @@ use bevy::prelude::Vec2;
 use std::collections::HashSet;
 
 #[derive(Clone, Debug)]
-struct Triangle {
-    vertices: [usize; 3],
+pub struct Triangle {
+    pub vertices: [usize; 3],
 }
 
 fn circle_circumcenter(a: Vec2, b: Vec2, c: Vec2) -> Option<(Vec2, f32)> {

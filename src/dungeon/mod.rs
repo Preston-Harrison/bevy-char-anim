@@ -2,18 +2,21 @@ use bevy::{
     color::palettes::css::*,
     math::bounding::{Aabb3d, IntersectsVolume},
     prelude::*,
-    utils::HashMap,
+    utils::{HashMap, HashSet},
 };
 use rand::Rng;
 
-use crate::utils::{self, freecam::FreeCamera};
+use crate::{
+    algo::{self, delaunay3d::Vertex, mst},
+    utils::{self, freecam::FreeCamera},
+};
 
 pub fn run() {
     App::new()
         .add_plugins(DefaultPlugins)
         .add_plugins(utils::freecam::FreeCameraPlugin)
         .add_systems(Startup, setup)
-        .add_systems(Update, utils::toggle_cursor_grab_with_esc)
+        .add_systems(Update, (utils::toggle_cursor_grab_with_esc, render_dungeon))
         .run();
 }
 
@@ -43,8 +46,10 @@ impl RoomType {
     }
 }
 
+#[derive(Component)]
 pub struct Dungeon {
-    rooms: HashMap<IVec3, Room>,
+    rooms: Vec<(IVec3, Room)>,
+    edges: HashSet<(usize, usize)>,
 }
 
 impl Dungeon {
@@ -69,7 +74,7 @@ impl Dungeon {
 
 pub struct DungeonConfig {
     initial_radius: Vec3,
-	min_separation: Vec3,
+    min_separation: Vec3,
     n_rooms: usize,
 }
 
@@ -125,15 +130,40 @@ pub fn generate_dungeon(cfg: &DungeonConfig) -> Dungeon {
         }
     }
 
-    let mut room_map: HashMap<IVec3, Room> = HashMap::with_capacity(rooms.len());
-    for (pos, room) in rooms {
-        room_map.insert(pos.as_ivec3(), room);
-    }
+    let vertices = rooms
+        .iter()
+        .map(|(pos, _)| Vertex { position: *pos })
+        .collect::<Vec<_>>();
+    let indices: HashMap<IVec3, usize> = rooms
+        .iter()
+        .enumerate()
+        .map(|(ix, (pos, _))| (pos.as_ivec3(), ix))
+        .collect();
+    let polygons = algo::delaunay3d::Delaunay3D::triangulate(&vertices);
+    let edges: Vec<_> = polygons
+        .edges
+        .iter()
+        .map(|edge| {
+            let u_ix = indices[&edge.u.position.as_ivec3()];
+            let v_ix = indices[&edge.v.position.as_ivec3()];
+            sorted((u_ix, v_ix))
+        })
+        .collect();
 
-    Dungeon { rooms: room_map }
+	let mst_edges: Vec<mst::Edge> = edges.iter().map(|(a, b)| mst::Edge { a: *a, b: *b, weight: 1.0 }).collect();
+	let min_tree = mst::kruskal_mst(mst_edges, vertices.len());
+	let edges = min_tree.into_iter().map(|edge| sorted((edge.a, edge.b))).collect();
+
+    Dungeon {
+        rooms: rooms
+            .into_iter()
+            .map(|(pos, room)| (pos.as_ivec3(), room))
+            .collect(),
+        edges,
+    }
 }
 
-fn setup(mut commands: Commands, asset_server: Res<AssetServer>) {
+fn setup(mut commands: Commands) {
     // Spawn the camera.
     commands.spawn((
         Camera3d::default(),
@@ -153,8 +183,38 @@ fn setup(mut commands: Commands, asset_server: Res<AssetServer>) {
 
     let config = DungeonConfig {
         initial_radius: Vec3::splat(10.0),
-		min_separation: Vec3::splat(2.0),
+        min_separation: Vec3::splat(2.0),
         n_rooms: 40,
     };
-    generate_dungeon(&config).render(Vec3::ZERO, commands, &asset_server);
+    commands.spawn(generate_dungeon(&config));
+}
+
+fn render_dungeon(
+    mut gizmos: Gizmos,
+    mut commands: Commands,
+    added: Query<&Dungeon, Added<Dungeon>>,
+    dungeons: Query<&Dungeon>,
+    asset_server: Res<AssetServer>,
+) {
+    for dungeon in added.iter() {
+        dungeon.render(Vec3::ZERO, commands.reborrow(), &asset_server);
+    }
+
+    for dungeon in dungeons.iter() {
+        for edge in &dungeon.edges {
+            let pos1 = dungeon.rooms[edge.0].0.as_vec3();
+            let pos2 = dungeon.rooms[edge.1].0.as_vec3();
+
+            gizmos.line(pos1, pos2, PURPLE);
+        }
+    }
+}
+
+fn sorted(edge: (usize, usize)) -> (usize, usize) {
+	let (a, b) = edge;
+	if a < b {
+		(a, b)
+	} else {
+		(b, a)
+	}
 }
