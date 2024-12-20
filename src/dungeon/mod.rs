@@ -47,28 +47,31 @@ impl RoomType {
 }
 
 #[derive(Component)]
+#[require(Transform)]
 pub struct Dungeon {
     rooms: Vec<(IVec3, Room)>,
     edges: HashSet<(usize, usize)>,
 }
 
 impl Dungeon {
-    pub fn render(&self, root: Vec3, mut commands: Commands, asset_server: &AssetServer) {
-        for (pos, room) in &self.rooms {
-            let translation = root + pos.as_vec3();
-            let size = room.room_type.size();
-            let mesh = Cuboid::new(size.x, size.y, size.z);
-            let color = match room.room_type {
-                RoomType::Loot => YELLOW,
-                RoomType::Spawn => GREEN,
-                RoomType::Boss => RED,
-            };
-            commands.spawn((
-                Mesh3d(asset_server.add(mesh.mesh().build())),
-                MeshMaterial3d(asset_server.add(StandardMaterial::from_color(color))),
-                Transform::from_translation(translation),
-            ));
-        }
+    pub fn render(&self, root: Entity, mut commands: Commands, asset_server: &AssetServer) {
+        commands.entity(root).with_children(|parent| {
+            for (pos, room) in &self.rooms {
+                let translation = pos.as_vec3();
+                let size = room.room_type.size();
+                let mesh = Cuboid::new(size.x, size.y, size.z);
+                let color = match room.room_type {
+                    RoomType::Loot => YELLOW,
+                    RoomType::Spawn => GREEN,
+                    RoomType::Boss => RED,
+                };
+                parent.spawn((
+                    Mesh3d(asset_server.add(mesh.mesh().build())),
+                    MeshMaterial3d(asset_server.add(StandardMaterial::from_color(color))),
+                    Transform::from_translation(translation),
+                ));
+            }
+        });
     }
 }
 
@@ -150,9 +153,19 @@ pub fn generate_dungeon(cfg: &DungeonConfig) -> Dungeon {
         })
         .collect();
 
-	let mst_edges: Vec<mst::Edge> = edges.iter().map(|(a, b)| mst::Edge { a: *a, b: *b, weight: 1.0 }).collect();
-	let min_tree = mst::kruskal_mst(mst_edges, vertices.len());
-	let edges = min_tree.into_iter().map(|edge| sorted((edge.a, edge.b))).collect();
+    let mst_edges: Vec<mst::Edge> = edges
+        .iter()
+        .map(|(a, b)| mst::Edge {
+            a: *a,
+            b: *b,
+            weight: 1.0,
+        })
+        .collect();
+    let min_tree = mst::kruskal_mst(mst_edges, vertices.len());
+    let edges = min_tree
+        .into_iter()
+        .map(|edge| sorted((edge.a, edge.b)))
+        .collect();
 
     Dungeon {
         rooms: rooms
@@ -192,12 +205,12 @@ fn setup(mut commands: Commands) {
 fn render_dungeon(
     mut gizmos: Gizmos,
     mut commands: Commands,
-    added: Query<&Dungeon, Added<Dungeon>>,
+    added: Query<(Entity, &Dungeon), Added<Dungeon>>,
     dungeons: Query<&Dungeon>,
     asset_server: Res<AssetServer>,
 ) {
-    for dungeon in added.iter() {
-        dungeon.render(Vec3::ZERO, commands.reborrow(), &asset_server);
+    for (entity, dungeon) in added.iter() {
+        dungeon.render(entity, commands.reborrow(), &asset_server);
     }
 
     for dungeon in dungeons.iter() {
@@ -211,10 +224,10 @@ fn render_dungeon(
 }
 
 fn sorted(edge: (usize, usize)) -> (usize, usize) {
-	let (a, b) = edge;
-	if a < b {
-		(a, b)
-	} else {
-		(b, a)
-	}
+    let (a, b) = edge;
+    if a < b {
+        (a, b)
+    } else {
+        (b, a)
+    }
 }
