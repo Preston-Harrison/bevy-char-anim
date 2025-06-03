@@ -1,5 +1,6 @@
 use bevy::render::mesh::{Indices, Mesh, VertexAttributeValues};
-use bevy::{prelude::*, utils::HashSet};
+use bevy::prelude::*;
+use bevy::platform::collections::HashSet;
 use bevy_rapier3d::prelude::*;
 
 use crate::utils;
@@ -13,7 +14,7 @@ pub fn setup_navmesh(
     mut tracker: Local<HashSet<Entity>>,
     meshes: Query<(Entity, &Mesh3d, &GlobalTransform)>,
     mesh_res: Res<Assets<Mesh>>,
-    parents: Query<&Parent>,
+    parents: Query<&ChildOf>,
     navmesh: Query<&NavMeshConstructor>,
 ) {
     for (entity, handle, transform) in meshes.iter() {

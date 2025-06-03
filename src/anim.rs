@@ -2,7 +2,7 @@ use bevy::{
     animation::{ActiveAnimation, AnimationTarget, RepeatAnimation},
     asset::AssetPath,
     prelude::*,
-    utils::HashMap,
+    platform::collections::HashMap,
 };
 
 use crate::{
@@ -152,7 +152,7 @@ pub fn load_player_animations(
     names: &Query<&Name>,
     animation_targets: &Query<&AnimationTarget>,
     commands: Commands,
-    parents: &Query<&Parent>,
+    parents: &Query<&ChildOf>,
 ) -> (
     PlayerAnimations,
     PlayerProceduralAnimationTargets,
@@ -270,7 +270,7 @@ fn init_mixamo_rig_masks(
     names: &Query<&Name>,
     animation_targets: &Query<&AnimationTarget>,
     mut commands: Commands,
-    parents: &Query<&Parent>,
+    parents: &Query<&ChildOf>,
 ) -> PlayerProceduralAnimationTargets {
     // (name, should masks decendants, mask type)
     let masks = &[

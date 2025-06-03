@@ -8,7 +8,7 @@ pub fn toggle_cursor_grab_with_esc(
     mut q_windows: Query<&mut Window, With<PrimaryWindow>>,
 ) {
     if keys.just_pressed(KeyCode::Escape) {
-        let mut primary_window = q_windows.single_mut();
+        let mut primary_window = q_windows.single_mut().unwrap();
         primary_window.cursor_options.visible = !primary_window.cursor_options.visible;
         primary_window.cursor_options.grab_mode = if primary_window.cursor_options.visible {
             CursorGrabMode::None
@@ -96,11 +96,11 @@ pub mod freecam {
         mut camera: Query<&mut Transform, With<FreeCamera>>,
         q_windows: Query<&Window, With<PrimaryWindow>>,
     ) {
-        let primary_window = q_windows.single();
+        let primary_window = q_windows.single().unwrap();
         if primary_window.cursor_options.grab_mode != CursorGrabMode::Locked {
             return;
         }
-        let Ok(mut camera) = camera.get_single_mut() else {
+        let Ok(mut camera) = camera.single_mut() else {
             return;
         };
         for motion in mouse_motion.read() {
@@ -119,7 +119,7 @@ pub fn get_all_descendants(entity: Entity, children: &Query<&Children>) -> Vec<E
     };
     children_ok
         .iter()
-        .flat_map(|e| get_all_descendants(*e, children))
+        .flat_map(|e| get_all_descendants(e.entity(), children))
         .chain(std::iter::once(entity))
         .collect()
 }
@@ -135,7 +135,7 @@ pub fn map_query<T: Component + Clone>(entites: Vec<Entity>, query: &Query<&T>) 
 
 pub fn find_upwards<'a, T: Component>(
     entity: Entity,
-    parents: &Query<&Parent>,
+    parents: &Query<&ChildOf>,
     component: &'a Query<&T>,
 ) -> Option<(Entity, &'a T)> {
     let mut search = entity;

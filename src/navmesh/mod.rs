@@ -7,9 +7,9 @@ use crate::{
     utils::{self, freecam::FreeCamera},
 };
 
-mod nav;
-mod merge;
 mod astar;
+mod merge;
+mod nav;
 
 pub fn run() {
     App::new()
@@ -19,14 +19,9 @@ pub fn run() {
         .add_plugins(utils::freecam::FreeCameraPlugin)
         .add_plugins(EnemyPlugin)
         .add_systems(Startup, setup)
-        .add_systems(
-            Update,
-            (
-                setup_navmesh,
-                utils::toggle_cursor_grab_with_esc,
-                draw_path_nodes,
-            ),
-        )
+        .add_systems(Update, setup_navmesh)
+        .add_systems(Update, utils::toggle_cursor_grab_with_esc)
+        .add_systems(Update, draw_path_nodes)
         .run();
 }
 
@@ -59,27 +54,27 @@ fn draw_path_nodes(
     mut end: Local<Option<Vec3>>,
     mut path: Local<Option<Vec<Vec3>>>,
     mut commands: Commands,
-    rapier: ReadDefaultRapierContext,
+    rapier: ReadRapierContext,
     mut gizmos: Gizmos,
     query: Query<&NavMesh>,
     camera: Query<&GlobalTransform, With<Camera>>,
     mouse: Res<ButtonInput<MouseButton>>,
     mut enemies: Query<(&GlobalTransform, &mut Enemy)>,
 ) {
-    let Ok(cam_t) = camera.get_single() else {
+    let Ok(cam_t) = camera.single() else {
         return;
     };
-    let Ok(grid) = query.get_single() else {
+    let Ok(grid) = query.single() else {
         return;
     };
 
-    let enemy = enemy.get_or_insert_with(|| {
-        commands.spawn(Enemy::new(Vec3::Y * 1.0)).id()
-    });
+    let enemy = enemy.get_or_insert_with(|| commands.spawn(Enemy::new(Vec3::Y * 1.0)).id());
 
     let ray_origin = cam_t.translation();
     let ray_direction = cam_t.rotation() * Vec3::NEG_Z;
-    let hit = rapier.cast_ray(
+    let context = rapier.single().unwrap();
+
+    let hit = context.cast_ray(
         ray_origin,
         ray_direction,
         100.0,
@@ -109,7 +104,7 @@ fn draw_path_nodes(
                     });
                 };
                 path
-            },
+            }
             _ => None,
         };
     }

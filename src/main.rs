@@ -10,15 +10,15 @@ use state::{PlayerAnimationInput, PlayerAnimationState};
 use tracer::Tracer;
 use utils::{freecam::FreeCamera, toggle_cursor_grab_with_esc};
 
+mod algo;
 mod anim;
+mod dungeon;
+mod enemy;
+mod mutant;
+mod navmesh;
 mod state;
 mod tracer;
 mod utils;
-mod mutant;
-mod navmesh;
-mod enemy;
-mod dungeon;
-mod algo;
 
 fn main() {
     if env::args().any(|v| v == "navmesh") {
@@ -33,7 +33,7 @@ fn main() {
         .add_plugins(utils::freecam::FreeCameraPlugin)
         .add_plugins(tracer::TracerPlugin)
         .add_plugins(anim::AnimationPlugin)
-        .add_plugins(mutant::MutantPlugin)
+        // .add_plugins(mutant::MutantPlugin)
         .add_systems(Startup, setup)
         .add_systems(
             Update,
@@ -98,7 +98,7 @@ fn toggle_freecam(
     if keys.just_pressed(KeyCode::KeyF) {
         *enabled = !*enabled;
     }
-    freecam.single_mut().movement_enabled = *enabled;
+    freecam.single_mut().unwrap().movement_enabled = *enabled;
 }
 
 #[derive(Component)]
@@ -109,7 +109,7 @@ fn init_player_animations(
     mut new_anim_players: Query<Entity, Added<AnimationPlayer>>,
     asset_server: Res<AssetServer>,
     children: Query<&Children>,
-    parents: Query<&Parent>,
+    parents: Query<&ChildOf>,
     names: Query<&Name>,
     players: Query<&Player>,
     mut animation_graphs: ResMut<Assets<AnimationGraph>>,
@@ -184,7 +184,7 @@ fn transition_player_animations(
         *airborne = !*airborne;
     }
 
-    if let Ok(mut state) = players.get_single_mut() {
+    if let Ok(mut state) = players.single_mut() {
         state.set_input(input);
 
         let bullet_point_global = global_transforms
