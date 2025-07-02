@@ -1,6 +1,6 @@
 use std::{cmp::Ordering, collections::BinaryHeap};
 
-use bevy::{prelude::*, utils::HashMap};
+use bevy::{prelude::*, platform::collections::HashMap};
 
 /// Node struct to hold A* frontier data
 #[derive(Copy, Clone, PartialEq)]

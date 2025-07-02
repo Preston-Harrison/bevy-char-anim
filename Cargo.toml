@@ -4,10 +4,10 @@ version = "0.1.0"
 edition = "2021"
 
 [dependencies]
-bevy = { version = "0.15.0" }
-bevy-inspector-egui = { version = "0.28.0" }
-bevy_hanabi = { version = "0.14" }
-bevy_rapier3d = "0.28.0"
+bevy = { version = "0.16.0" }
+bevy-inspector-egui = { version = "0.31" }
+bevy_hanabi = { version = "0.16" }
+bevy_rapier3d = "0.30.0"
 rand = "0.8.5"
 
 [profile.dev]

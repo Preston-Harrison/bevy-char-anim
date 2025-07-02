@@ -14,7 +14,7 @@ pub fn run_player_animations(
         &mut AnimationPlayer,
         &AnimationGraphHandle,
     )>,
-    parents: Query<&Parent>,
+    parents: Query<&ChildOf>,
     players: Query<&Player>,
     mut transforms: Query<&mut Transform>,
     global_transforms: Query<&GlobalTransform>,

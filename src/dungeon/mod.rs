@@ -2,7 +2,7 @@ use bevy::{
     color::palettes::css::*,
     math::bounding::{Aabb3d, IntersectsVolume},
     prelude::*,
-    utils::{HashMap, HashSet},
+    platform::collections::{HashMap, HashSet},
 };
 use rand::Rng;
 

@@ -62,7 +62,7 @@ fn setup_mutant_animations(
     mut commands: Commands,
     mut query: Query<Entity, Added<AnimationPlayer>>,
     mutants: Query<&Mutant>,
-    parents: Query<&Parent>,
+    parents: Query<&ChildOf>,
     asset_server: Res<AssetServer>,
     mut animation_graphs: ResMut<Assets<AnimationGraph>>,
 ) {
